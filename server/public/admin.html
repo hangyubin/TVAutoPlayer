@@ -130,6 +130,7 @@
 
 <section id="tab-schedules" class="card hidden">
   <h2>时段计划（命中时段自动切换，30 分钟步进，不可重叠）</h2>
+  <p class="muted" style="margin:8px 0">每个时段卡片内可添加多个媒体并拖动排序；修改后点「保存」生效。</p>
   <div class="row">
     <select id="schStart"></select><span>至</span><select id="schEnd"></select>
     <select id="schMedia" class="grow"></select>
@@ -209,9 +210,20 @@ async function loadMedia() {
       <td><button class="btn sub" onclick="openPreview('${url}', '${m.kind}')">预览</button>
           <button class="btn warn" onclick="delMedia(${m.id})">删除</button></td></tr>`;
   }).join('');
-  const opts = media.map(m => `<option value="${m.id}">[${m.kind==='IMAGE'?'图':'视'}] ${esc(m.orig_name)}</option>`).join('');
+  const opts = mediaOptionsHtml();
   $('#progMedia').innerHTML = opts; $('#schMedia').innerHTML = opts;
 }
+const mediaOptionsHtml = () =>
+  media.map(m => `<option value="${m.id}">[${m.kind==='IMAGE'?'图':'视'}] ${esc(m.orig_name)}</option>`).join('');
+const mediaNameOf = (id) => {
+  const m = media.find(x => x.id === id);
+  return m ? m.orig_name : `#${id}（已删除）`;
+};
+const ensureMedia = async () => {
+  media = await api('GET', '/api/media');
+  const opts = mediaOptionsHtml();
+  $('#progMedia').innerHTML = opts; $('#schMedia').innerHTML = opts;
+};
 window.openPreview = (url, kind) => {
   const p = $('#preview');
   p.innerHTML = `<span class="close-btn" onclick="closePreview()">× 关闭</span>` +
@@ -323,6 +335,7 @@ $('#uploadCancel').onclick = () => { queueAbort = true; queueXhrs.forEach(x => {
 
 // ----- 默认节目单 -----
 async function loadProgram() {
+  await ensureMedia();
   program = await api('GET', '/api/program');
   renderProgram();
 }
@@ -395,27 +408,132 @@ const minuteOpts = () => {
 $('#schStart').innerHTML = minuteOpts(); $('#schEnd').innerHTML = minuteOpts();
 $('#schStart').value = 480; $('#schEnd').value = 1080;
 let schedules = [];
+let schTimeEditing = -1;
+const fmtMin = (m) => `${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+
 async function loadSchedules() {
+  await ensureMedia();
   schedules = await api('GET', '/api/schedules');
-  $('#schList').innerHTML = schedules.map(s => {
-    const f = (m) => `${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+  schTimeEditing = -1;
+  renderSchedules();
+}
+function renderSchedules() {
+  $('#schList').innerHTML = schedules.map((s, si) => {
+    const rows = s.items.map((it, i) => `<tr class="drag-row" draggable="true" data-sch="${si}" data-index="${i}">
+      <td class="drag-handle">☰ ${i+1}</td>
+      <td title="${esc(mediaNameOf(it.mediaId))}">${esc(mediaNameOf(it.mediaId))}</td>
+      <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
+      <td><button class="btn warn" onclick="schRmItem(${si},${i})">移除</button></td></tr>`).join('')
+      || '<tr><td colspan="4" class="muted">暂无内容，请在下方添加</td></tr>';
+    const timeEdit = schTimeEditing === si
+      ? `<div class="row" style="margin-top:8px">
+          <select id="editStart">${minuteOpts()}</select><span>至</span><select id="editEnd">${minuteOpts()}</select>
+          <button class="btn" onclick="schSaveTime(${si})">确定</button>
+          <button class="btn sub" onclick="schCancelTime()">取消</button>
+        </div>` : '';
     return `<div class="card" style="background:#f8f9fa;margin-top:12px">
       <div class="row">
-        <strong>${f(s.startMinute)} - ${f(s.endMinute)}${s.endMinute < s.startMinute ? '（跨午夜）' : ''}</strong>
+        <strong>${fmtMin(s.startMinute)} - ${fmtMin(s.endMinute)}${s.endMinute < s.startMinute ? '（跨午夜）' : ''}</strong>
         <span class="tag">${s.enabled ? '启用' : '停用'}</span>
         <span class="muted">${s.items.length} 项</span>
         <span class="grow"></span>
-        <button class="btn sub" onclick="toggleSch('${s.id}', ${!s.enabled})">${s.enabled ? '停用' : '启用'}</button>
-        <button class="btn warn" onclick="delSch('${s.id}')">删除</button>
-      </div></div>`;
+        <button class="btn sub" onclick="schStartEditTime(${si})">修改时间</button>
+        <button class="btn sub" onclick="toggleSch(${si})">${s.enabled ? '停用' : '启用'}</button>
+        <button class="btn warn" onclick="delSch(${si})">删除</button>
+        <button class="btn" onclick="saveSch(${si})">保存</button>
+      </div>
+      ${timeEdit}
+      <table style="margin-top:8px"><thead><tr>
+        <th style="width:60px">拖动</th><th>文件</th><th style="width:80px">时长</th><th style="width:80px">操作</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <div class="row" style="margin-top:8px">
+        <select class="grow" id="schItemMedia${si}">${mediaOptionsHtml()}</select>
+        <input type="number" id="schItemDur${si}" min="1" placeholder="秒">
+        <button class="btn" onclick="schAddItem(${si})">添加</button>
+      </div>
+    </div>`;
   }).join('') || '<p class="muted" style="margin-top:12px">暂无时段</p>';
+  if (schTimeEditing >= 0 && schedules[schTimeEditing]) {
+    $('#editStart').value = schedules[schTimeEditing].startMinute;
+    $('#editEnd').value = schedules[schTimeEditing].endMinute;
+  }
 }
-window.toggleSch = async (id, enabled) => {
-  const s = schedules.find(x => x.id === id);
-  await api('PUT', '/api/schedules/' + id, { startMinute: s.startMinute, endMinute: s.endMinute, enabled, items: s.items });
-  toast('已更新'); loadSchedules();
+
+// 时段内的拖动排序（仅同一时段内）
+let schDragFrom = null;
+const schList = $('#schList');
+const clearSchDragMarks = () => {
+  schList.querySelectorAll('tr').forEach(el => el.classList.remove('dragging', 'drop-target'));
 };
-window.delSch = async (id) => { if (confirm('删除该时段？')) { await api('DELETE', '/api/schedules/' + id); toast('已删除'); loadSchedules(); } };
+schList.addEventListener('dragstart', (e) => {
+  const tr = e.target.closest('tr[data-sch]');
+  if (!tr) return;
+  schDragFrom = { sch: +tr.dataset.sch, index: +tr.dataset.index };
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', ''); } catch {}
+  tr.classList.add('dragging');
+});
+schList.addEventListener('dragend', () => { schDragFrom = null; clearSchDragMarks(); });
+schList.addEventListener('dragover', (e) => {
+  const tr = e.target.closest('tr[data-sch]');
+  if (!tr || !schDragFrom || +tr.dataset.sch !== schDragFrom.sch) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  clearSchDragMarks();
+  tr.classList.add('drop-target');
+});
+schList.addEventListener('drop', (e) => {
+  if (!schDragFrom) return;
+  const tr = e.target.closest('tr[data-sch]');
+  if (!tr || +tr.dataset.sch !== schDragFrom.sch) return;
+  e.preventDefault();
+  const items = schedules[schDragFrom.sch].items;
+  const to = +tr.dataset.index;
+  if (to !== schDragFrom.index) {
+    const [moved] = items.splice(schDragFrom.index, 1);
+    items.splice(to, 0, moved);
+  }
+  schDragFrom = null;
+  renderSchedules();
+});
+
+window.schStartEditTime = (si) => { schTimeEditing = si; renderSchedules(); };
+window.schCancelTime = () => { schTimeEditing = -1; renderSchedules(); };
+window.schSaveTime = (si) => {
+  const st = +$('#editStart').value, en = +$('#editEnd').value;
+  if (st === en) return toast('开始与结束时间不能相同');
+  schedules[si].startMinute = st;
+  schedules[si].endMinute = en;
+  schTimeEditing = -1;
+  renderSchedules();
+};
+window.schAddItem = (si) => {
+  const mediaId = +$(`#schItemMedia${si}`).value;
+  if (!mediaId) return toast('请先上传媒体');
+  const m = media.find(x => x.id === mediaId);
+  const dur = +$(`#schItemDur${si}`).value || null;
+  schedules[si].items.push({ mediaId, durationSec: m.kind === 'IMAGE' ? dur : null });
+  renderSchedules();
+};
+window.schRmItem = (si, i) => { schedules[si].items.splice(i, 1); renderSchedules(); };
+window.toggleSch = (si) => { schedules[si].enabled = !schedules[si].enabled; renderSchedules(); };
+window.saveSch = async (si) => {
+  const s = schedules[si];
+  if (!s.items.length) return toast('时段节目单不能为空');
+  try {
+    await api('PUT', '/api/schedules/' + s.id, {
+      startMinute: s.startMinute, endMinute: s.endMinute, enabled: s.enabled, items: s.items,
+    });
+    toast('时段已保存，电视端将在 30 秒内自动生效');
+    loadSchedules();
+  } catch {}
+};
+window.delSch = async (si) => {
+  if (confirm('删除该时段？')) {
+    await api('DELETE', '/api/schedules/' + schedules[si].id);
+    toast('已删除'); loadSchedules();
+  }
+};
 $('#schAdd').onclick = async () => {
   const mediaId = +$('#schMedia').value; if (!mediaId) return toast('请先上传媒体');
   const m = media.find(x => x.id === mediaId);
@@ -424,7 +542,7 @@ $('#schAdd').onclick = async () => {
       startMinute: +$('#schStart').value, endMinute: +$('#schEnd').value,
       items: [{ mediaId, durationSec: m.kind === 'IMAGE' ? (+$('#schDur').value || null) : null }],
     });
-    toast('时段已添加'); loadSchedules();
+    toast('时段已添加，可在卡片中继续添加内容'); loadSchedules();
   } catch {}
 };
 

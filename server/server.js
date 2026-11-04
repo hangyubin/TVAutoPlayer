@@ -131,11 +131,6 @@ function parseMultipart(buf, contentType) {
   return { filename: path.basename(fm[1]), data };
 }
 
-function auth(req) {
-  if (!ADMIN_TOKEN) return true;
-  return req.headers['x-admin-token'] === ADMIN_TOKEN;
-}
-
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
