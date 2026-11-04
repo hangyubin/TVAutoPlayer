@@ -1,6 +1,7 @@
 // TVAutoPlayer 内容管理服务端（零依赖，Node >= 22.5）
 // 终端接口: GET /api/manifest, GET /media/<file>
-// 管理接口: /api/media /api/program /api/schedules /api/publish /api/versions /api/rollback /api/terminals
+// 管理接口: /api/media /api/program /api/schedules /api/terminals
+// 内容保存即生效：manifest 直接由当前数据生成，contentVersion 为内容哈希
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -98,6 +99,15 @@ function readBody(req) {
   });
 }
 
+// 内容哈希作为 contentVersion（终端只比较是否变化）；保持为 31 位以内整数
+const contentVersionOf = (manifest) => {
+  const copy = Object.assign({}, manifest);
+  delete copy.contentVersion;
+  const hex = crypto.createHash('sha256').update(JSON.stringify(copy)).digest('hex');
+  const value = parseInt(hex.slice(0, 7), 16);
+  return value === 0 ? 1 : value;
+};
+
 const jsonBody = async (req) => {
   const buf = await readBody(req);
   try { return JSON.parse(buf.toString('utf8') || '{}'); }
@@ -133,15 +143,16 @@ const server = http.createServer(async (req, res) => {
   try {
     // 终端公开接口
     if (p === '/api/manifest' && req.method === 'GET') {
-      const v = db.prepare('SELECT * FROM versions ORDER BY content_version DESC LIMIT 1').get();
-      if (!v) return send(res, 404, { error: '尚未发布任何版本' });
+      // 直接由当前媒体 / 节目单 / 时段生成，保存后立即对终端可见
+      const manifest = buildManifest(db, 0);
+      manifest.contentVersion = contentVersionOf(manifest);
       // 已配对终端会带上 X-Terminal-Id；记录在线状态与拉取到的版本，后台可见
       const tid = parseInt(req.headers['x-terminal-id'], 10);
       if (Number.isInteger(tid) && tid > 0) {
         db.prepare("UPDATE terminals SET last_seen_at = datetime('now'), last_version = ? WHERE id = ?")
-          .run(v.content_version, tid);
+          .run(manifest.contentVersion, tid);
       }
-      return send(res, 200, v.manifest_json);
+      return send(res, 200, manifest);
     }
     if (p.startsWith('/media/') && (req.method === 'GET' || req.method === 'HEAD')) {
       const name = path.basename(p.slice(7));
@@ -270,7 +281,7 @@ const server = http.createServer(async (req, res) => {
       return ok(res);
     }
 
-    // ----- 默认节目单草稿 -----
+    // ----- 默认节目单 -----
     if (p === '/api/program' && req.method === 'GET') {
       const items = db.prepare(`
         SELECT pi.id, pi.media_id AS mediaId, pi.duration_sec AS durationSec,
@@ -333,33 +344,6 @@ const server = http.createServer(async (req, res) => {
       return ok(res);
     }
 
-    // ----- 发布 / 版本 / 回滚 -----
-    if (p === '/api/publish' && req.method === 'POST') {
-      const next = (db.prepare('SELECT MAX(content_version) v FROM versions').get().v || 0) + 1;
-      const manifest = buildManifest(db, next);
-      if (manifest.defaultProgram.items.length === 0 && manifest.schedules.length === 0)
-        return bad(res, '默认节目单与时段计划均为空，无可发布内容');
-      db.prepare('INSERT INTO versions (content_version, manifest_json) VALUES (?,?)')
-        .run(next, JSON.stringify(manifest));
-      return ok(res, { contentVersion: next });
-    }
-    if (p === '/api/versions' && req.method === 'GET') {
-      return ok(res, db.prepare(
-        'SELECT content_version AS contentVersion, created_at AS createdAt FROM versions ORDER BY content_version DESC').all());
-    }
-    m = /^\/api\/rollback\/(\d+)$/.exec(p);
-    if (m && req.method === 'POST') {
-      const v = db.prepare('SELECT * FROM versions WHERE content_version = ?').get(m[1]);
-      if (!v) return send(res, 404, { error: '版本不存在' });
-      // 回滚 = 以旧内容发布为新版本，保持 contentVersion 单调递增
-      const next = (db.prepare('SELECT MAX(content_version) v FROM versions').get().v || 0) + 1;
-      const manifest = JSON.parse(v.manifest_json);
-      manifest.contentVersion = next;
-      db.prepare('INSERT INTO versions (content_version, manifest_json) VALUES (?,?)')
-        .run(next, JSON.stringify(manifest));
-      return ok(res, { contentVersion: next, rolledBackFrom: Number(m[1]) });
-    }
-
     // ----- 终端配对 -----
     if (p === '/api/pairing-codes' && req.method === 'POST') {
       const { name } = await jsonBody(req);
@@ -370,11 +354,6 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/terminals' && req.method === 'GET') {
       return ok(res, db.prepare('SELECT id, name, code, status, created_at AS createdAt, last_seen_at AS lastSeenAt, last_version AS lastVersion FROM terminals ORDER BY id DESC').all());
-    }
-    m = /^\/api\/terminals\/(\d+)\/confirm$/.exec(p);
-    if (m && req.method === 'POST') {
-      const r = db.prepare("UPDATE terminals SET status = 'paired', code = NULL WHERE id = ? AND status = 'pending'").run(m[1]);
-      return r.changes ? ok(res) : send(res, 404, { error: '终端不存在或已配对' });
     }
     m = /^\/api\/terminals\/(\d+)$/.exec(p);
     if (m && req.method === 'DELETE') {

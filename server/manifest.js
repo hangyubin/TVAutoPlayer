@@ -1,5 +1,5 @@
 // 节目单 / 时段 -> manifest.json（终端消费契约）
-// schemaVersion=1, contentVersion 单调递增；结构镜像 App 端 PlaybackConfigurationCodec
+// schemaVersion=1；contentVersion 为内容哈希（由 server.js 计算），结构镜像 App 端播放配置
 const crypto = require('crypto');
 
 const MINUTES_PER_DAY = 1440;

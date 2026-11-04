@@ -275,8 +275,8 @@ public final class MainActivity extends ComponentActivity {
                     return;
                 }
                 lastRemoteConfig = config;
-                if (!force && version > 0 && version <= appliedRemoteVersion) {
-                    // contentVersion unchanged — keep playing, no re-render
+                if (!force && version > 0 && version == appliedRemoteVersion && player != null) {
+                    // Content hash unchanged and already playing — keep going.
                     return;
                 }
                 appliedRemoteVersion = version;

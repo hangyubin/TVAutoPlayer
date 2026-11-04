@@ -120,14 +120,14 @@
     <string name="remote_server_url_empty">Please enter the server address.</string>
     <string name="remote_server_url_invalid">Server address format is invalid.</string>
     <!-- Remote fetch errors -->
-    <string name="remote_not_published">The admin UI has not published any version yet. Please publish once on the server.</string>
+    <string name="remote_not_published">No playable content on the server yet. Upload media and add it to the program in the admin UI first.</string>
     <string name="remote_http_error">Server returned %1$d</string>
     <string name="remote_connect_error">Cannot connect to %1$s</string>
     <string name="remote_parse_error">Malformed manifest</string>
     <string name="remote_schema_unsupported">Unsupported schema version %1$d (only %2$d is supported)</string>
     <string name="remote_prefix">Remote: %1$s</string>
     <string name="remote_not_set">Server address not set</string>
-    <string name="remote_empty_manifest">The manifest has no playable media. Upload and publish in the admin UI first.</string>
+    <string name="remote_empty_manifest">The server has no playable media yet. Upload media and add it to the program in the admin UI first.</string>
     <string name="remote_display_image">Remote image #%1$d</string>
     <string name="remote_display_video">Remote video #%1$d</string>
     <string name="remote_relative_time_just_now">just now</string>

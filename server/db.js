@@ -1,4 +1,4 @@
-// SQLite 数据层：媒体库、草稿节目单、时段计划、已发布版本、终端配对、管理员账户
+// SQLite 数据层：媒体库、节目单、时段计划、终端配对、管理员账户
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 
@@ -31,12 +31,6 @@ CREATE TABLE IF NOT EXISTS schedules (
   end_minute   INTEGER NOT NULL CHECK (end_minute   BETWEEN 0 AND 1439),
   enabled      INTEGER NOT NULL DEFAULT 1,
   items_json   TEXT NOT NULL DEFAULT '[]'
-);
-
-CREATE TABLE IF NOT EXISTS versions (
-  content_version INTEGER PRIMARY KEY,
-  manifest_json   TEXT NOT NULL,
-  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS terminals (

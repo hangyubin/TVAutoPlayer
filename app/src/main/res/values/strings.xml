@@ -120,14 +120,14 @@
     <string name="remote_server_url_empty">请输入服务器地址。</string>
     <string name="remote_server_url_invalid">服务器地址格式不对。</string>
     <!-- Remote fetch errors (shown in Toast / empty panel) -->
-    <string name="remote_not_published">管理后台尚未发布任何版本，请先在服务端发布一次。</string>
+    <string name="remote_not_published">服务器上还没有可播放的内容，请先在管理后台上传媒体并加入节目单。</string>
     <string name="remote_http_error">服务端返回 %1$d</string>
     <string name="remote_connect_error">无法连接到 %1$s</string>
     <string name="remote_parse_error">manifest 格式错误</string>
     <string name="remote_schema_unsupported">不支持的版本 %1$d（仅支持 %2$d）</string>
     <string name="remote_prefix">远程模式：%1$s</string>
     <string name="remote_not_set">服务器地址未设置</string>
-    <string name="remote_empty_manifest">manifest 没有任何可播放的媒体。请先在管理后台上传并发布。</string>
+    <string name="remote_empty_manifest">服务器上还没有可播放的媒体。请先在管理后台上传媒体并加入节目单。</string>
     <string name="remote_display_image">远程图片 #%1$d</string>
     <string name="remote_display_video">远程视频 #%1$d</string>
     <string name="remote_relative_time_just_now">刚刚</string>

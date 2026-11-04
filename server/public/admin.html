@@ -29,6 +29,10 @@
   .btn.warn { background: #b71c1c; }
   .btn:disabled { opacity: .5; cursor: default; }
   .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef1f3; }
+  tr.drag-row { cursor: grab; }
+  tr.drag-row.dragging { opacity: .45; }
+  tr.drag-row.drop-target td { box-shadow: inset 0 2px 0 #16633c; }
+  td.drag-handle { cursor: grab; color: #6b7280; white-space: nowrap; }
   .tag.img { background: #e3f0e8; color: #16633c; }
   .tag.vid { background: #e6ecf5; color: #1d4e89; }
   .muted { color: #8f959e; font-size: 13px; }
@@ -78,7 +82,6 @@
     <button data-tab="media" class="on">媒体库</button>
     <button data-tab="program">节目单</button>
     <button data-tab="schedules">时段</button>
-    <button data-tab="publish">发布</button>
     <button data-tab="terminals">终端</button>
   </nav>
   <div id="userPanel" class="hidden">
@@ -120,9 +123,9 @@
     <button class="btn" id="progAdd">添加</button>
     <button class="btn" id="progSave">保存</button>
   </div>
-  <p class="muted" style="margin:8px 0">“秒”仅对图片生效，留空使用终端默认时长。</p>
+  <p class="muted" style="margin:8px 0">拖动行可直接调整顺序；“秒”仅对图片生效，留空使用终端默认时长。保存后立即生效，电视端 30 秒内自动刷新。</p>
   <table><thead><tr>
-    <th style="width:44px">#</th><th>文件</th><th style="width:80px">时长</th><th style="width:150px">排序/操作</th>
+    <th style="width:60px">拖动</th><th>文件</th><th style="width:80px">时长</th><th style="width:80px">操作</th>
   </tr></thead><tbody id="progList"></tbody></table>
 </section>
 
@@ -135,18 +138,6 @@
     <button class="btn" id="schAdd">添加时段</button>
   </div>
   <div id="schList"></div>
-</section>
-
-<section id="tab-publish" class="card hidden">
-  <h2>发布与版本</h2>
-  <div class="row">
-    <button class="btn" id="pubBtn">发布新版本</button>
-    <span id="curVer" class="muted"></span>
-  </div>
-  <table style="margin-top:12px"><thead><tr>
-    <th style="width:90px">版本</th><th>发布时间(UTC)</th><th style="width:80px">操作</th>
-  </tr></thead><tbody id="verList"></tbody></table>
-  <p class="muted" style="margin-top:8px">电视端轮询地址：<code>GET /api/manifest</code>，媒体地址：<code>/media/&lt;file&gt;</code></p>
 </section>
 
 <section id="tab-terminals" class="card hidden">
@@ -348,16 +339,52 @@ async function loadProgram() {
   renderProgram();
 }
 function renderProgram() {
-  $('#progList').innerHTML = program.map((it, i) => `<tr>
-    <td>${i+1}</td><td title="${esc(it.name)}">${esc(it.name)}</td>
+  $('#progList').innerHTML = program.map((it, i) => `<tr class="drag-row" draggable="true" data-index="${i}">
+    <td class="drag-handle">☰ ${i+1}</td><td title="${esc(it.name)}">${esc(it.name)}</td>
     <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
-    <td><button class="btn sub" onclick="moveItem(${i},-1)">上移</button>
-        <button class="btn sub" onclick="moveItem(${i},1)">下移</button>
-        <button class="btn warn" onclick="rmItem(${i})">移除</button></td></tr>`).join('');
+    <td><button class="btn warn" onclick="rmItem(${i})">移除</button></td></tr>`).join('');
 }
-window.moveItem = (i, d) => { const j = i + d; if (j < 0 || j >= program.length) return;
-  [program[i], program[j]] = [program[j], program[i]]; renderProgram(); };
 window.rmItem = (i) => { program.splice(i, 1); renderProgram(); };
+
+// 拖动排序：把行拖到另一行的位置即可
+let dragFrom = -1;
+const progList = $('#progList');
+const clearDragMarks = () => {
+  progList.querySelectorAll('tr').forEach(el => el.classList.remove('dragging', 'drop-target'));
+};
+progList.addEventListener('dragstart', (e) => {
+  const tr = e.target.closest('tr');
+  if (!tr || tr.dataset.index === undefined) return;
+  dragFrom = +tr.dataset.index;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', String(dragFrom)); } catch {}
+  tr.classList.add('dragging');
+});
+progList.addEventListener('dragend', () => { dragFrom = -1; clearDragMarks(); });
+progList.addEventListener('dragover', (e) => {
+  const tr = e.target.closest('tr');
+  if (!tr || dragFrom < 0) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  clearDragMarks();
+  tr.classList.add('drop-target');
+});
+progList.addEventListener('dragleave', (e) => {
+  if (!progList.contains(e.relatedTarget)) clearDragMarks();
+});
+progList.addEventListener('drop', (e) => {
+  if (dragFrom < 0) return;
+  e.preventDefault();
+  const tr = e.target.closest('tr');
+  const to = tr && tr.dataset.index !== undefined ? +tr.dataset.index : program.length - 1;
+  if (to !== dragFrom) {
+    const [moved] = program.splice(dragFrom, 1);
+    program.splice(to, 0, moved);
+  }
+  dragFrom = -1;
+  clearDragMarks();
+  renderProgram();
+});
 $('#progAdd').onclick = () => {
   const mediaId = +$('#progMedia').value; if (!mediaId) return toast('请先上传媒体');
   const dur = +$('#progDur').value || null;
@@ -367,7 +394,7 @@ $('#progAdd').onclick = () => {
 };
 $('#progSave').onclick = async () => {
   await api('PUT', '/api/program', { items: program.map(it => ({ mediaId: it.mediaId, durationSec: it.durationSec })) });
-  toast('节目单已保存'); loadProgram();
+  toast('节目单已保存，电视端将在 30 秒内自动生效'); loadProgram();
 };
 
 // ----- 时段计划 -----
@@ -413,37 +440,19 @@ $('#schAdd').onclick = async () => {
   } catch {}
 };
 
-// ----- 发布 / 版本 -----
-async function loadVersions() {
-  const list = await api('GET', '/api/versions');
-  $('#curVer').textContent = list.length ? `当前版本 v${list[0].contentVersion}` : '尚未发布';
-  $('#verList').innerHTML = list.map(v => `<tr>
-    <td>v${v.contentVersion}</td><td>${v.createdAt}</td>
-    <td><button class="btn sub" onclick="rollback(${v.contentVersion})">回滚</button></td></tr>`).join('');
-}
-window.rollback = async (v) => {
-  if (!confirm(`回滚到 v${v} 的内容？（会生成一个新版本号）`)) return;
-  const r = await api('POST', '/api/rollback/' + v); toast(`已回滚，新版本 v${r.contentVersion}`); loadVersions();
-};
-$('#pubBtn').onclick = async () => {
-  try { const r = await api('POST', '/api/publish'); toast(`发布成功：v${r.contentVersion}`); loadVersions(); } catch {}
-};
-
 // ----- 终端配对 -----
 async function loadTerminals() {
   const list = await api('GET', '/api/terminals');
   $('#termList').innerHTML = list.map(t => `<tr>
     <td>${esc(t.name)}</td><td><strong>${t.code || '-'}</strong></td>
-    <td><span class="tag">${t.status === 'paired' ? '已配对' : '待确认'}</span></td>
+    <td><span class="tag">${t.status === 'paired' ? '已配对' : '待输入'}</span></td>
     <td>${t.lastSeenAt ? `${esc(t.lastSeenAt)}<br><small>v${t.lastVersion ?? '-'}</small>` : '-'}</td>
-    <td>${t.status === 'pending' ? `<button class="btn" onclick="confirmTerm(${t.id})">确认</button>` : ''}
-        <button class="btn warn" onclick="delTerm(${t.id})">删除</button></td></tr>`).join('');
+    <td><button class="btn warn" onclick="delTerm(${t.id})">删除</button></td></tr>`).join('');
 }
 $('#genCode').onclick = async () => {
   const r = await api('POST', '/api/pairing-codes', { name: $('#termName').value });
   toast(`配对码：${r.code}（请在电视上输入）`); $('#termName').value = ''; loadTerminals();
 };
-window.confirmTerm = async (id) => { await api('POST', `/api/terminals/${id}/confirm`); toast('已确认'); loadTerminals(); };
 window.delTerm = async (id) => { if (confirm('删除该终端？')) { await api('DELETE', '/api/terminals/' + id); toast('已删除'); loadTerminals(); } };
 
 function load() {
@@ -451,7 +460,6 @@ function load() {
   if (tab === 'media') loadMedia();
   else if (tab === 'program') loadProgram();
   else if (tab === 'schedules') loadSchedules();
-  else if (tab === 'publish') loadVersions();
   else if (tab === 'terminals') loadTerminals();
 }
 
