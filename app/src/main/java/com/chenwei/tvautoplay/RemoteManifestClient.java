@@ -43,8 +43,7 @@ public final class RemoteManifestClient {
         return baseUrl;
     }
 
-    /** 只返回成功；失败抛 FetchException（含错误信息，面向用户）。 */
-    public Manifest fetch() throws FetchException {
+/** Returns on success; throws FetchException with a user-facing message on failure. */    public Manifest fetch() throws FetchException {
         String endpoint = baseUrl + "/api/manifest";
         HttpURLConnection conn = null;
         try {
@@ -55,18 +54,14 @@ public final class RemoteManifestClient {
             conn.setInstanceFollowRedirects(true);
             int code = conn.getResponseCode();
             if (code == 404) {
-                throw new FetchException("管理后台尚未发布任何版本，请先在服务端发布一次。");
-            }
+throw new FetchException("server_not_published");            }
             if (code < 200 || code >= 300) {
-                throw new FetchException("服务端返回 " + code + "：" + safeBody(conn));
-            }
+throw new FetchException("server_http_error:" + code);            }
             String body = readAll(conn);
             return parse(body);
         } catch (IOException ioe) {
-            throw new FetchException("无法连接到 " + baseUrl + "：" + ioe.getMessage());
-        } catch (JSONException je) {
-            throw new FetchException("manifest 格式错误：" + je.getMessage());
-        } finally {
+throw new FetchException("connect_error:" + baseUrl);        } catch (JSONException je) {
+throw new FetchException("parse_error");        } finally {
             if (conn != null) conn.disconnect();
         }
     }
@@ -77,8 +72,7 @@ public final class RemoteManifestClient {
         JSONObject root = new JSONObject(raw);
         int schemaVersion = root.optInt("schemaVersion", -1);
         if (schemaVersion != SCHEMA_VERSION) {
-            throw new JSONException("不支持的 schemaVersion：" + schemaVersion + "（仅支持 " + SCHEMA_VERSION + "）");
-        }
+throw new JSONException("unsupported_schema_version:" + schemaVersion + ":" + SCHEMA_VERSION);        }
         int contentVersion = root.optInt("contentVersion", 0);
         JSONObject defaultProgram = root.optJSONObject("defaultProgram");
         JSONArray schedules = root.optJSONArray("schedules");

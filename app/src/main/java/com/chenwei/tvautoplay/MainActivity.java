@@ -160,9 +160,12 @@ public final class MainActivity extends ComponentActivity {
                 configStore.setRemoteLastFetchMillis(System.currentTimeMillis());
                 configStore.setRemoteContentVersion(manifest.contentVersion);
             } catch (RemoteManifestClient.FetchException e) {
-                String host = serverUrl.isEmpty() ? "服务器地址未设置" : serverUrl;
-                String msg = "远程模式：" + e.getMessage();
-                mainHandler.post(() -> renderRemoteError(host + "：" + e.getMessage(), msg));
+                String host = serverUrl.isEmpty()
+                        ? getString(R.string.remote_not_set)
+                        : serverUrl;
+                String detail = translateRemoteError(e.getMessage());
+                String msg = getString(R.string.remote_prefix, detail);
+                mainHandler.post(() -> renderRemoteError(host + "：" + detail, msg));
                 return;
             } finally {
                 remoteFetchInFlight = false;
@@ -171,12 +174,15 @@ public final class MainActivity extends ComponentActivity {
             final int version = manifest != null ? manifest.contentVersion : 0;
             mainHandler.post(() -> {
                 if (finalConfig == null) {
-                    renderRemoteError(serverUrl.isEmpty() ? "远程模式" : serverUrl,
-                            "manifest 没有任何可播放的媒体。请先在管理后台上传并发布。");
+                    renderRemoteError(
+                            serverUrl.isEmpty()
+                                    ? getString(R.string.remote_mode_label_short)
+                                    : serverUrl,
+                            getString(R.string.remote_empty_manifest));
                     return;
                 }
                 if (!force && version > 0 && version <= appliedRemoteVersion) {
-                    // contentVersion 没变 — 不重新渲染，只继续播放
+                    // contentVersion unchanged — keep playing, no re-render
                     return;
                 }
                 appliedRemoteVersion = version;
@@ -185,10 +191,41 @@ public final class MainActivity extends ComponentActivity {
         });
     }
 
+    /** Translate a FetchException machine code into a localized user message. */
+    private String translateRemoteError(String code) {
+        if (code == null) return "";
+        if (code.equals("server_not_published")) {
+            return getString(R.string.remote_not_published);
+        }
+        if (code.startsWith("server_http_error:")) {
+            try {
+                int status = Integer.parseInt(code.substring("server_http_error:".length()));
+                return getString(R.string.remote_http_error, status);
+            } catch (NumberFormatException ignored) {}
+        }
+        if (code.startsWith("connect_error:")) {
+            return getString(R.string.remote_connect_error, code.substring("connect_error:".length()));
+        }
+        if (code.equals("parse_error")) {
+            return getString(R.string.remote_parse_error);
+        }
+        if (code.startsWith("unsupported_schema_version:")) {
+            String[] parts = code.split(":");
+            if (parts.length >= 3) {
+                try {
+                    int got = Integer.parseInt(parts[1]);
+                    int want = Integer.parseInt(parts[2]);
+                    return getString(R.string.remote_schema_unsupported, got, want);
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        return code;
+    }
+
     private void renderRemoteError(String title, String detail) {
         showPlayer(); // make space for a toast
-        Toast.makeText(this, "远程模式：" + detail, Toast.LENGTH_LONG).show();
-        // 如果当前没有正在播放的内容，把错误面板换上来
+        Toast.makeText(this, getString(R.string.remote_prefix, detail), Toast.LENGTH_LONG).show();
+        // If nothing is playing yet, swap in the error panel
         if (player == null || !player.isPlaying()) {
             releasePlayer();
             playerView.setVisibility(View.GONE);
@@ -309,8 +346,7 @@ public final class MainActivity extends ComponentActivity {
         if (!activityStarted) {
             return;
         }
-        // 远程模式顺便刷新 manifest
-        if (configStore.isRemoteModeEnabled()) {
+// Remote mode: also refresh manifest        if (configStore.isRemoteModeEnabled()) {
             fetchAndApplyRemoteManifest(false);
             scheduleHandler.postDelayed(scheduleCheck, SCHEDULE_CHECK_INTERVAL_MS);
             return;

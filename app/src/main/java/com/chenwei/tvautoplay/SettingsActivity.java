@@ -335,13 +335,9 @@ public final class SettingsActivity extends ComponentActivity {
 
     private String formatElapsed(long ms) {
         long s = ms / 1000;
-        if (s < 5) return "刚刚";
-        if (s < 60) return s + " 秒";
-        long m = s / 60;
-        if (m < 60) return m + " 分";
-        long h = m / 60;
-        return h + " 小时";
-    }
+if (s < 5) return getString(R.string.remote_relative_time_just_now);if (s < 60) return getString(R.string.remote_relative_time_seconds, s);        long m = s / 60;
+if (m < 60) return getString(R.string.remote_relative_time_minutes, m);        long h = m / 60;
+return getString(R.string.remote_relative_time_hours, h);    }
 
     private void editServerUrl() {
         final EditText input = new EditText(this);
@@ -356,8 +352,7 @@ public final class SettingsActivity extends ComponentActivity {
                     String raw = input.getText().toString().trim();
                     if (raw.isEmpty()) {
                         configStore.setServerUrl("");
-                        // 地址被清空时顺便关远程模式
-                        configStore.setRemoteModeEnabled(false);
+// Clear remote mode when the address is cleared                        configStore.setRemoteModeEnabled(false);
                     } else {
                         configStore.setServerUrl(raw);
                     }
