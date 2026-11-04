@@ -107,4 +107,16 @@
         <item quantity="one">Skipped %1$d unreadable media file.</item>
         <item quantity="other">Skipped %1$d unreadable media files.</item>
     </plurals>
+    <!-- Remote CMS server strings -->
+    <string name="remote_mode_label">Remote mode (pull from CMS server)</string>
+    <string name="server_url_default">Server address: not set</string>
+    <string name="server_url_value">Server address: %1$s</string>
+    <string name="server_url_hint">Enter server IP or domain (for example 192.168.2.100). No http:// prefix needed.</string>
+    <string name="server_url_dialog_title">Server address</string>
+    <string name="remote_status_local">Current mode: local playback (TV or USB)</string>
+    <string name="remote_status_connected">Connected to remote server v%1$d · last update %2$s ago</string>
+    <string name="remote_status_disconnected">Remote mode is on, but not connected to the server yet</string>
+    <string name="remote_mode_need_server_url">Set the server address before enabling remote mode.</string>
+    <string name="remote_server_url_empty">Please enter the server address.</string>
+    <string name="remote_server_url_invalid">Server address format is invalid.</string>
 </resources>
