@@ -44,20 +44,10 @@
             android:textSize="20sp" />
 
         <Button
-            android:id="@+id/choose_video_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="28dp"
-            android:background="@drawable/button_background"
-            android:text="@string/choose_videos"
-            android:textColor="@color/text_primary"
-            android:textSize="@dimen/button_text_size" />
-
-        <Button
             android:id="@+id/open_settings_button"
             android:layout_width="match_parent"
             android:layout_height="@dimen/button_height"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="28dp"
             android:background="@drawable/button_background"
             android:text="@string/open_settings"
             android:textColor="@color/text_primary"
@@ -113,6 +103,36 @@
             android:text="@string/open_settings"
             android:textColor="@color/text_primary"
             android:textSize="@dimen/button_text_size" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/video_progress_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="@dimen/screen_horizontal_margin"
+        android:layout_marginEnd="@dimen/screen_horizontal_margin"
+        android:layout_marginBottom="20dp"
+        android:background="@drawable/panel_background"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/video_time_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp" />
+
+        <ProgressBar
+            android:id="@+id/video_progress_bar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="6dp"
+            android:layout_marginTop="6dp"
+            android:max="1000"
+            android:progressTint="@color/text_primary" />
     </LinearLayout>
 
 </merge>

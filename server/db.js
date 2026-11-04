@@ -58,4 +58,13 @@ CREATE TABLE IF NOT EXISTS admin_user (
 );
 `);
 
+// 终端在线状态（升级旧库时补齐列）
+const terminalColumns = db.prepare('PRAGMA table_info(terminals)').all().map(c => c.name);
+if (!terminalColumns.includes('last_seen_at')) {
+  db.exec('ALTER TABLE terminals ADD COLUMN last_seen_at TEXT');
+}
+if (!terminalColumns.includes('last_version')) {
+  db.exec('ALTER TABLE terminals ADD COLUMN last_version INTEGER');
+}
+
 module.exports = db;

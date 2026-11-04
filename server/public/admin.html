@@ -156,7 +156,7 @@
     <button class="btn" id="genCode">生成配对码</button>
   </div>
   <table style="margin-top:12px"><thead><tr>
-    <th>名称</th><th style="width:110px">配对码</th><th style="width:80px">状态</th><th style="width:110px">操作</th>
+    <th>名称</th><th style="width:110px">配对码</th><th style="width:80px">状态</th><th style="width:130px">最后在线</th><th style="width:110px">操作</th>
   </tr></thead><tbody id="termList"></tbody></table>
 </section>
 
@@ -435,6 +435,7 @@ async function loadTerminals() {
   $('#termList').innerHTML = list.map(t => `<tr>
     <td>${esc(t.name)}</td><td><strong>${t.code || '-'}</strong></td>
     <td><span class="tag">${t.status === 'paired' ? '已配对' : '待确认'}</span></td>
+    <td>${t.lastSeenAt ? `${esc(t.lastSeenAt)}<br><small>v${t.lastVersion ?? '-'}</small>` : '-'}</td>
     <td>${t.status === 'pending' ? `<button class="btn" onclick="confirmTerm(${t.id})">确认</button>` : ''}
         <button class="btn warn" onclick="delTerm(${t.id})">删除</button></td></tr>`).join('');
 }

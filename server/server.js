@@ -135,6 +135,12 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/manifest' && req.method === 'GET') {
       const v = db.prepare('SELECT * FROM versions ORDER BY content_version DESC LIMIT 1').get();
       if (!v) return send(res, 404, { error: '尚未发布任何版本' });
+      // 已配对终端会带上 X-Terminal-Id；记录在线状态与拉取到的版本，后台可见
+      const tid = parseInt(req.headers['x-terminal-id'], 10);
+      if (Number.isInteger(tid) && tid > 0) {
+        db.prepare("UPDATE terminals SET last_seen_at = datetime('now'), last_version = ? WHERE id = ?")
+          .run(v.content_version, tid);
+      }
       return send(res, 200, v.manifest_json);
     }
     if (p.startsWith('/media/') && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -174,7 +180,7 @@ const server = http.createServer(async (req, res) => {
       if (!t) return bad(res, '配对码无效或已使用');
       db.prepare("UPDATE terminals SET name = ?, code = NULL, status = 'paired' WHERE id = ?")
         .run(String(name || 'TV 终端').slice(0, 50), t.id);
-      return ok(res, { paired: true });
+      return ok(res, { paired: true, terminalId: t.id, name: String(name || t.name || 'TV 终端') });
     }
 
     // 管理页面（始终可访问，未登录时 HTML 内会显示登录 UI）
@@ -363,7 +369,7 @@ const server = http.createServer(async (req, res) => {
       return ok(res, { code });
     }
     if (p === '/api/terminals' && req.method === 'GET') {
-      return ok(res, db.prepare('SELECT id, name, code, status, created_at AS createdAt FROM terminals ORDER BY id DESC').all());
+      return ok(res, db.prepare('SELECT id, name, code, status, created_at AS createdAt, last_seen_at AS lastSeenAt, last_version AS lastVersion FROM terminals ORDER BY id DESC').all());
     }
     m = /^\/api\/terminals\/(\d+)\/confirm$/.exec(p);
     if (m && req.method === 'POST') {

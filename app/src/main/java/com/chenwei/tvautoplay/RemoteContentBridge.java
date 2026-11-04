@@ -22,12 +22,24 @@ public final class RemoteContentBridge {
      * Returns {@code null} when the manifest contains no playable items at all.
      */
     public static PlaybackConfiguration toLocalConfig(RemoteManifestClient.Manifest manifest) {
+        return toLocalConfig(manifest, true, true, ScaleMode.FIT, ImageDuration.DEFAULT);
+    }
+
+    /**
+     * Translates the manifest while keeping the TV's own audio / scale / image-duration
+     * preferences, so server-driven content still respects the on-device settings.
+     */
+    public static PlaybackConfiguration toLocalConfig(
+            RemoteManifestClient.Manifest manifest,
+            boolean autoStartEnabled,
+            boolean soundEnabled,
+            ScaleMode scaleMode,
+            ImageDuration imageDuration) {
         Objects.requireNonNull(manifest, "manifest");
         if (!manifest.hasAnyMedia()) return null;
 
-        // Global image duration: use DEFAULT for now; per-item overrides are not
-        // exposed through PlaybackConfiguration.ImageDuration enum yet.
-        ImageDuration globalImageDuration = ImageDuration.DEFAULT;
+        ImageDuration globalImageDuration =
+                imageDuration == null ? ImageDuration.DEFAULT : imageDuration;
 
         List<PlaylistItem> defaultList = buildPlaylist(manifest.defaultProgram, globalImageDuration);
         List<ScheduledPlaylist> scheduled = new ArrayList<>();
@@ -46,9 +58,9 @@ public final class RemoteContentBridge {
 
         return new PlaybackConfiguration(
                 defaultList.isEmpty() ? Collections.emptyList() : defaultList,
-                true,                       // auto-start remote playback by default
-                true,                       // sound on
-                ScaleMode.FIT,              // safe default
+                autoStartEnabled,
+                soundEnabled,
+                scaleMode == null ? ScaleMode.FIT : scaleMode,
                 globalImageDuration,
                 scheduleEnabled,
                 scheduled

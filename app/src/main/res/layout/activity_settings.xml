@@ -22,55 +22,72 @@
             android:textSize="@dimen/title_text_size"
             android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+        <Button
+            android:id="@+id/play_mode_button"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/button_height"
             android:layout_marginTop="24dp"
-            android:text="@string/selected_playlist_label"
-            android:textColor="@color/text_secondary"
-            android:textSize="18sp" />
+            android:background="@drawable/button_background"
+            android:text="@string/play_mode_usb"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/button_text_size" />
 
         <TextView
-            android:id="@+id/selected_video_value"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:ellipsize="end"
-            android:maxLines="10"
-            android:text="@string/not_selected"
-            android:textColor="@color/text_primary"
-            android:textSize="@dimen/value_text_size" />
-
-        <Button
-            android:id="@+id/select_video_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="20dp"
-            android:background="@drawable/button_background"
-            android:text="@string/replace_playlist"
-            android:textColor="@color/text_primary"
-            android:textSize="@dimen/button_text_size" />
-
-        <Button
-            android:id="@+id/append_video_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/button_background"
-            android:text="@string/append_videos"
-            android:textColor="@color/text_primary"
-            android:textSize="@dimen/button_text_size" />
-
-        <Button
-            android:id="@+id/system_picker_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/button_background"
-            android:text="@string/system_picker_optional"
+            android:lineSpacingExtra="4dp"
+            android:text="@string/play_mode_hint"
             android:textColor="@color/text_secondary"
-            android:textSize="@dimen/button_text_size"
-            android:visibility="gone" />
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/server_url_button"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/button_height"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/button_background"
+            android:text="@string/server_url_default"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/button_text_size" />
+
+        <TextView
+            android:id="@+id/remote_status_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/remote_status_local"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/terminal_pair_button"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/button_height"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/button_background"
+            android:text="@string/terminal_pair_button"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/button_text_size" />
+
+        <TextView
+            android:id="@+id/terminal_pair_status_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/terminal_not_paired"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/usb_status_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="4dp"
+            android:text="@string/usb_status_empty"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp" />
 
         <CheckBox
             android:id="@+id/auto_start_checkbox"
@@ -139,68 +156,6 @@
             android:text="@string/image_duration_description"
             android:textColor="@color/text_secondary"
             android:textSize="16sp" />
-
-        <CheckBox
-            android:id="@+id/remote_mode_checkbox"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="18dp"
-            android:background="@drawable/button_background"
-            android:buttonTint="@color/primary"
-            android:focusable="true"
-            android:paddingStart="20dp"
-            android:paddingEnd="20dp"
-            android:text="@string/remote_mode_label"
-            android:textColor="@color/text_primary"
-            android:textSize="@dimen/button_text_size" />
-
-        <Button
-            android:id="@+id/server_url_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/button_background"
-            android:text="@string/server_url_default"
-            android:textColor="@color/text_primary"
-            android:textSize="@dimen/button_text_size" />
-
-        <TextView
-            android:id="@+id/remote_status_value"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/remote_status_local"
-            android:textColor="@color/text_secondary"
-            android:textSize="15sp" />
-
-        <Button
-            android:id="@+id/schedule_settings_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="18dp"
-            android:background="@drawable/button_background"
-            android:text="@string/schedule_settings_button"
-            android:textColor="@color/text_primary"
-            android:textSize="@dimen/button_text_size" />
-
-        <TextView
-            android:id="@+id/schedule_summary_value"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="@string/schedule_settings_empty"
-            android:textColor="@color/text_secondary"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/clear_video_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="18dp"
-            android:background="@drawable/button_background"
-            android:text="@string/clear_playlist"
-            android:textColor="@color/danger"
-            android:textSize="@dimen/button_text_size" />
 
         <TextView
             android:layout_width="match_parent"

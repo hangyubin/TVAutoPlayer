@@ -11,6 +11,8 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -30,7 +32,9 @@ import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -46,6 +50,11 @@ public final class MainActivity extends ComponentActivity {
         t.setDaemon(true);
         return t;
     });
+    private final ExecutorService usbScanner = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "UsbScanner");
+        t.setDaemon(true);
+        return t;
+    });
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private PlayerView playerView;
     private View emptyPanel;
@@ -56,15 +65,33 @@ public final class MainActivity extends ComponentActivity {
     private ExoPlayer player;
     private boolean settingsOpen;
     private boolean selectionPromptAttempted;
-    private boolean unreadableNoticeShown;
+    private boolean permissionRequested;
+    private boolean usbScanInFlight;
     private int consecutivePlaybackFailures;
     private int activePlaylistSize;
     private String activePlaylistSourceId;
     private boolean activityStarted;
     private ActivityResultLauncher<Intent> settingsLauncher;
+    private ActivityResultLauncher<String[]> permissionLauncher;
     /** Monotonic version of the config last rendered; remote version is pushed here too. */
     private int appliedRemoteVersion;
     private boolean remoteFetchInFlight;
+    /** Last remote configuration received; used for 30 s schedule-boundary checks. */
+    private PlaybackConfiguration lastRemoteConfig;
+    private LinearLayout videoProgressPanel;
+    private ProgressBar videoProgressBar;
+    private TextView videoTimeText;
+    private List<PlaylistItem> currentPlayable = new ArrayList<>();
+    private static final long VIDEO_PROGRESS_INTERVAL_MS = 500;
+    private final Runnable progressTicker = new Runnable() {
+        @Override
+        public void run() {
+            updateVideoProgress();
+            if (player != null) {
+                mainHandler.postDelayed(this, VIDEO_PROGRESS_INTERVAL_MS);
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,10 +103,14 @@ public final class MainActivity extends ComponentActivity {
                     startConfiguredPlayback();
                 }
         );
+        permissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestMultiplePermissions(),
+                result -> startConfiguredPlayback()
+        );
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                openSettings(false);
+                openSettings();
             }
         });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -92,15 +123,16 @@ public final class MainActivity extends ComponentActivity {
         errorPanel = findViewById(R.id.error_panel);
         emptyMessage = findViewById(R.id.empty_message);
         errorMessage = findViewById(R.id.error_message);
+        videoProgressPanel = findViewById(R.id.video_progress_panel);
+        videoProgressBar = findViewById(R.id.video_progress_bar);
+        videoTimeText = findViewById(R.id.video_time_text);
 
-        Button chooseMedia = findViewById(R.id.choose_video_button);
         Button openSettings = findViewById(R.id.open_settings_button);
         Button retry = findViewById(R.id.retry_button);
         Button errorSettings = findViewById(R.id.error_settings_button);
 
-        chooseMedia.setOnClickListener(view -> openSettings(true));
-        openSettings.setOnClickListener(view -> openSettings(false));
-        errorSettings.setOnClickListener(view -> openSettings(false));
+        openSettings.setOnClickListener(view -> openSettings());
+        errorSettings.setOnClickListener(view -> openSettings());
         retry.setOnClickListener(view -> retryPlayback());
     }
 
@@ -124,7 +156,7 @@ public final class MainActivity extends ComponentActivity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS) {
-            openSettings(false);
+            openSettings();
             return true;
         }
         return super.onKeyDown(keyCode, event);
@@ -143,8 +175,61 @@ public final class MainActivity extends ComponentActivity {
             fetchAndApplyRemoteManifest(false);
             return;
         }
-        PlaybackConfiguration configuration = configStore.load();
-        renderConfiguration(configuration, null);
+        if (!MediaPermissionHelper.hasReadAccess(this)) {
+            if (!permissionRequested) {
+                permissionRequested = true;
+                permissionLauncher.launch(MediaPermissionHelper.requiredPermissions());
+            } else {
+                showMediaPermissionRequired();
+            }
+            return;
+        }
+        requestUsbScan();
+    }
+
+    /** Scans the fixed USB folder off the UI thread, then renders only when content changed. */
+    private void requestUsbScan() {
+        if (usbScanInFlight) {
+            return;
+        }
+        usbScanInFlight = true;
+        usbScanner.execute(() -> {
+            List<PlaylistItem> items = UsbMediaScanner.scan(this);
+            mainHandler.post(() -> {
+                usbScanInFlight = false;
+                if (!activityStarted) {
+                    return;
+                }
+                String signature = signatureOf(items);
+                if (player != null && ("usb:" + signature).equals(activePlaylistSourceId)) {
+                    return;
+                }
+                renderConfiguration(buildUsbConfiguration(items), "usb:" + signature);
+            });
+        });
+    }
+
+    /** USB mode keeps the TV's audio / scale / image-duration preferences. */
+    private PlaybackConfiguration buildUsbConfiguration(List<PlaylistItem> items) {
+        PlaybackConfiguration base = configStore.load();
+        return new PlaybackConfiguration(
+                items,
+                base.autoStartEnabled(),
+                base.soundEnabled(),
+                base.scaleMode(),
+                base.imageDuration(),
+                false,
+                Collections.emptyList()
+        );
+    }
+
+    /** Stable content signature so a 30 s tick only re-renders when the drive changed. */
+    private static String signatureOf(List<PlaylistItem> items) {
+        StringBuilder builder = new StringBuilder();
+        for (PlaylistItem item : items) {
+            builder.append(item.uri()).append('|');
+        }
+        return Integer.toHexString(builder.toString().hashCode());
     }
 
     /** Non-blocking; runs on background thread, renders on main. */
@@ -156,8 +241,16 @@ public final class MainActivity extends ComponentActivity {
             final PlaybackConfiguration config;
             final int version;
             try {
-                RemoteManifestClient.Manifest manifest = new RemoteManifestClient(serverUrl).fetch();
-                config = RemoteContentBridge.toLocalConfig(manifest);
+                RemoteManifestClient.Manifest manifest =
+                        new RemoteManifestClient(serverUrl, configStore.terminalId()).fetch();
+                PlaybackConfiguration preferences = configStore.load();
+                config = RemoteContentBridge.toLocalConfig(
+                        manifest,
+                        preferences.autoStartEnabled(),
+                        preferences.soundEnabled(),
+                        preferences.scaleMode(),
+                        preferences.imageDuration()
+                );
                 version = manifest.contentVersion;
                 configStore.setRemoteLastFetchMillis(System.currentTimeMillis());
                 configStore.setRemoteContentVersion(version);
@@ -181,6 +274,7 @@ public final class MainActivity extends ComponentActivity {
                             getString(R.string.remote_empty_manifest));
                     return;
                 }
+                lastRemoteConfig = config;
                 if (!force && version > 0 && version <= appliedRemoteVersion) {
                     // contentVersion unchanged — keep playing, no re-render
                     return;
@@ -238,13 +332,9 @@ public final class MainActivity extends ComponentActivity {
     private void renderConfiguration(PlaybackConfiguration configuration, String sourceTag) {
         ResolvedPlaylist effective = resolveEffectivePlaylist(configuration);
         activePlaylistSourceId = sourceTag != null ? sourceTag : effective.sourceId();
-        List<PlaylistItem> items = effective.playlist();
-
-        // In remote mode we skip UriAccess.readableItems() — every item is an
-        // absolute http:// URL that ExoPlayer streams directly, no ContentResolver.
-        List<PlaylistItem> playable = configStore.isRemoteModeEnabled()
-                ? items
-                : UriAccess.readableItems(this, items);
+        // Remote items are absolute http(s) URLs; USB items were already verified by
+        // the scanner (content:// on Android 10+, file:// on older TVs).
+        List<PlaylistItem> playable = effective.playlist();
         PlaybackDecision decision = PlaybackPolicy.decide(
                 effective.playlist(),
                 playable.size()
@@ -261,25 +351,10 @@ public final class MainActivity extends ComponentActivity {
             }
             showSelectionRequired(decision);
             if (!settingsOpen && !selectionPromptAttempted) {
-                openSettings(true);
+                selectionPromptAttempted = true;
+                openSettings();
             }
             return;
-        }
-
-        if (!configStore.isRemoteModeEnabled()
-                && !unreadableNoticeShown
-                && playable.size() < effective.playlist().size()) {
-            unreadableNoticeShown = true;
-            int unreadableCount = effective.playlist().size() - playable.size();
-            Toast.makeText(
-                    this,
-                    getResources().getQuantityString(
-                            R.plurals.unreadable_media_skipped,
-                            unreadableCount,
-                            unreadableCount
-                    ),
-                    Toast.LENGTH_LONG
-            ).show();
         }
 
         showPlayer();
@@ -326,6 +401,9 @@ public final class MainActivity extends ComponentActivity {
         player.setMediaItems(mediaItems);
         player.prepare();
         player.play();
+        currentPlayable = playable;
+        mainHandler.removeCallbacks(progressTicker);
+        mainHandler.post(progressTicker);
 
         if (!configStore.isSettingsHintShown()) {
             Toast.makeText(this, R.string.settings_key_hint, Toast.LENGTH_LONG).show();
@@ -346,16 +424,24 @@ public final class MainActivity extends ComponentActivity {
         if (!activityStarted) {
             return;
         }
-        // Remote mode: also refresh manifest
+        // Remote mode: refresh the manifest AND re-evaluate the schedule boundary.
+        // The config cached from the last successful fetch carries the server-side
+        // schedules, so a 30 s tick can switch programs without a new publish.
         if (configStore.isRemoteModeEnabled()) {
+            PlaybackConfiguration remoteConfiguration = lastRemoteConfig;
+            if (remoteConfiguration != null) {
+                ResolvedPlaylist effective = resolveEffectivePlaylist(remoteConfiguration);
+                if (!effective.sourceId().equals(activePlaylistSourceId)) {
+                    renderConfiguration(remoteConfiguration, effective.sourceId());
+                }
+            }
             fetchAndApplyRemoteManifest(false);
             scheduleHandler.postDelayed(scheduleCheck, SCHEDULE_CHECK_INTERVAL_MS);
             return;
         }
-        PlaybackConfiguration configuration = configStore.load();
-        ResolvedPlaylist effective = resolveEffectivePlaylist(configuration);
-        if (!effective.sourceId().equals(activePlaylistSourceId)) {
-            startConfiguredPlayback();
+        // USB mode: rescan periodically so a drive plugged in later starts playing.
+        if (MediaPermissionHelper.hasReadAccess(this)) {
+            requestUsbScan();
         }
         scheduleHandler.postDelayed(scheduleCheck, SCHEDULE_CHECK_INTERVAL_MS);
     }
@@ -381,9 +467,19 @@ public final class MainActivity extends ComponentActivity {
         playerView.setVisibility(View.GONE);
         errorPanel.setVisibility(View.GONE);
         emptyPanel.setVisibility(View.VISIBLE);
-        emptyMessage.setText(decision == PlaybackDecision.PERMISSION_REQUIRED
-                ? R.string.playlist_permission_lost
-                : R.string.no_playlist_selected);
+        if (decision == PlaybackDecision.PERMISSION_REQUIRED) {
+            emptyMessage.setText(R.string.media_permission_required);
+        } else {
+            emptyMessage.setText(R.string.no_media_in_usb);
+        }
+    }
+
+    private void showMediaPermissionRequired() {
+        releasePlayer();
+        playerView.setVisibility(View.GONE);
+        errorPanel.setVisibility(View.GONE);
+        emptyPanel.setVisibility(View.VISIBLE);
+        emptyMessage.setText(R.string.media_permission_required);
     }
 
     private void showWaitingForSchedule() {
@@ -414,20 +510,20 @@ public final class MainActivity extends ComponentActivity {
         showPlaybackError(error);
     }
 
-    private void openSettings(boolean chooseImmediately) {
+    private void openSettings() {
         if (settingsOpen) {
             return;
         }
-        if (chooseImmediately) {
-            selectionPromptAttempted = true;
-        }
         settingsOpen = true;
-        Intent intent = new Intent(this, SettingsActivity.class)
-                .putExtra(SettingsActivity.EXTRA_CHOOSE_IMMEDIATELY, chooseImmediately);
-        settingsLauncher.launch(intent);
+        settingsLauncher.launch(new Intent(this, SettingsActivity.class));
     }
 
     private void releasePlayer() {
+        mainHandler.removeCallbacks(progressTicker);
+        if (videoProgressPanel != null) {
+            videoProgressPanel.setVisibility(View.GONE);
+        }
+        currentPlayable = new ArrayList<>();
         if (player != null) {
             playerView.setPlayer(null);
             player.release();
@@ -435,6 +531,45 @@ public final class MainActivity extends ComponentActivity {
         }
         activePlaylistSize = 0;
         consecutivePlaybackFailures = 0;
+    }
+
+    /** Shows elapsed time and progress only while a video item is playing. */
+    private void updateVideoProgress() {
+        if (player == null || videoProgressPanel == null) {
+            return;
+        }
+        int index = player.getCurrentMediaItemIndex();
+        boolean isVideo = index >= 0
+                && index < currentPlayable.size()
+                && currentPlayable.get(index).kind() == MediaKind.VIDEO;
+        if (!isVideo) {
+            videoProgressPanel.setVisibility(View.GONE);
+            return;
+        }
+        long duration = player.getDuration();
+        long position = Math.max(0L, player.getCurrentPosition());
+        videoProgressPanel.setVisibility(View.VISIBLE);
+        if (duration > 0) {
+            videoProgressBar.setProgress(
+                    (int) Math.min(1000L, position * 1000L / duration));
+            videoTimeText.setText(getString(
+                    R.string.video_progress_format,
+                    formatClock(position),
+                    formatClock(duration)));
+        } else {
+            videoProgressBar.setProgress(0);
+            videoTimeText.setText(formatClock(position));
+        }
+    }
+
+    private static String formatClock(long millis) {
+        long totalSeconds = Math.max(0L, millis) / 1000L;
+        long hours = totalSeconds / 3600L;
+        long minutes = (totalSeconds % 3600L) / 60L;
+        long seconds = totalSeconds % 60L;
+        return hours > 0
+                ? String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+                : String.format(Locale.US, "%02d:%02d", minutes, seconds);
     }
 
     @SuppressWarnings("deprecation")
@@ -470,6 +605,7 @@ public final class MainActivity extends ComponentActivity {
         super.onDestroy();
         scheduleHandler.removeCallbacks(scheduleCheck);
         remoteFetcher.shutdownNow();
+        usbScanner.shutdownNow();
         releasePlayer();
     }
 }

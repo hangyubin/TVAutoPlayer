@@ -28,10 +28,10 @@
     <string name="invalid_media_selection">No supported images or videos were selected. Please try again.</string>
     <string name="persist_permission_failed">The system picker did not grant persistent read access. Use the built-in media library or select the files again.</string>
     <string name="file_picker_unavailable">This TV has no compatible system file picker. Use the built-in media library.</string>
-    <string name="playlist_empty_title">Select images or videos to start</string>
-    <string name="no_playlist_selected">The built-in media library opens on first use. Select multiple images and videos from TV storage or a USB drive; the app remembers and loops the playlist.</string>
-    <string name="playlist_permission_lost">Media in the playlist was moved, deleted, or is no longer accessible. Select the media again.</string>
-    <string name="choose_videos">Select images / videos</string>
+    <string name="playlist_empty_title">No playable media found</string>
+    <string name="no_playlist_selected">USB mode only plays images and videos inside the TVAutoPlayer folder at the USB root. Add media files, then reinsert the drive.</string>
+    <string name="playlist_permission_lost">Media on the USB drive was moved or deleted. Reinsert the drive.</string>
+    <string name="choose_videos">Open settings</string>
     <string name="selected_playlist_label">Current playlist</string>
     <string name="selected_video_count">Media files: %1$d</string>
     <string name="replace_playlist">Reselect from TV / USB</string>
@@ -47,7 +47,7 @@
     <string name="media_library_found">Found %1$d supported media files. Select files and save.</string>
     <string name="media_library_empty">No supported images or videos were found. Copy files to Movies/TVAutoPlay or Pictures/TVAutoPlay on the TV or USB drive, reconnect the drive, wait briefly, then select Rescan.</string>
     <string name="media_library_scan_failed">Scan failed. Check image/video read permission and the USB connection, then try again.</string>
-    <string name="media_permission_required">Photo and video read permission is required to show media on the TV and USB drives. The app does not use the network, upload files, or modify originals.</string>
+    <string name="media_permission_required">Photo and video read permission is required to read media from the USB drive. Allow photo and video access for this app in system settings, then return.</string>
     <string name="grant_media_permission">Grant photo and video access</string>
     <string name="refresh_media_library">Rescan TV / USB</string>
     <string name="confirm_media_selection">Save selected media and play</string>
@@ -108,12 +108,12 @@
         <item quantity="other">Skipped %1$d unreadable media files.</item>
     </plurals>
     <!-- Remote CMS server strings -->
-    <string name="remote_mode_label">Remote mode (pull from CMS server)</string>
+    <string name="remote_mode_label">Server mode (content controlled by the CMS)</string>
     <string name="server_url_default">Server address: not set</string>
     <string name="server_url_value">Server address: %1$s</string>
     <string name="server_url_hint">Enter server IP or domain (for example 192.168.2.100). No http:// prefix needed.</string>
     <string name="server_url_dialog_title">Server address</string>
-    <string name="remote_status_local">Current mode: local playback (TV or USB)</string>
+    <string name="remote_status_local">Current mode: USB playback (only the TVAutoPlayer folder at the USB root)</string>
     <string name="remote_status_connected">Connected to remote server v%1$d · last update %2$s ago</string>
     <string name="remote_status_disconnected">Remote mode is on, but not connected to the server yet</string>
     <string name="remote_mode_need_server_url">Set the server address before enabling remote mode.</string>
@@ -136,4 +136,26 @@
     <string name="remote_relative_time_hours">%1$dh</string>
     <string name="remote_mode_label_short">Remote</string>
     <string name="save">Save</string>
+    <!-- Playback modes: CMS server / USB drive -->
+    <string name="play_mode_server">Playback mode: Server</string>
+    <string name="play_mode_usb">Playback mode: USB</string>
+    <string name="play_mode_hint">Server mode lets the CMS control content, order, and schedules. USB mode plays only images and videos inside the TVAutoPlayer folder at the USB root, sorted by file name and looped.</string>
+    <string name="play_mode_need_server_url">Set the server address before switching to server mode.</string>
+    <string name="usb_scanning">Scanning the USB folder…</string>
+    <string name="usb_status_value">USB folder: %1$d media files</string>
+    <string name="usb_status_empty">USB folder not found: put files in the TVAutoPlayer folder at the USB root.</string>
+    <string name="no_media_in_usb">No media found in USB mode. Put images or videos into the TVAutoPlayer folder at the USB root; playback starts automatically after the drive is reinserted.</string>
+    <!-- Terminal pairing -->
+    <string name="terminal_pair_button">Pair device</string>
+    <string name="terminal_pair_dialog_title">Enter pairing code</string>
+    <string name="terminal_pair_code_hint">6-digit code generated on the admin Terminals page</string>
+    <string name="terminal_pair_code_invalid">The pairing code must be 6 digits</string>
+    <string name="terminal_pair_need_server_url">Set the server address before pairing.</string>
+    <string name="terminal_paired_status">Paired: %1$s</string>
+    <string name="terminal_not_paired">Not paired</string>
+    <string name="terminal_pair_success">Paired: %1$s</string>
+    <string name="terminal_pair_failed">Pairing failed</string>
+    <string name="terminal_pair_rejected">Pairing rejected: %1$s</string>
+    <!-- Video progress overlay -->
+    <string name="video_progress_format">%1$s / %2$s</string>
 </resources>

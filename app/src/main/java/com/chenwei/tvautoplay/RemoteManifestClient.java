@@ -6,7 +6,9 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -34,9 +36,16 @@ public final class RemoteManifestClient {
     private static final int READ_TIMEOUT_MS = 15_000;
 
     private final String baseUrl;
+    private final long terminalId;
 
     public RemoteManifestClient(String baseUrl) {
+        this(baseUrl, 0L);
+    }
+
+    /** Identifies the paired terminal so the CMS can record last-seen status. */
+    public RemoteManifestClient(String baseUrl, long terminalId) {
         this.baseUrl = normalizeBaseUrl(baseUrl);
+        this.terminalId = terminalId;
     }
 
     public String baseUrl() {
@@ -53,6 +62,9 @@ public final class RemoteManifestClient {
             conn.setReadTimeout(READ_TIMEOUT_MS);
             conn.setRequestMethod("GET");
             conn.setInstanceFollowRedirects(true);
+            if (terminalId > 0) {
+                conn.setRequestProperty("X-Terminal-Id", String.valueOf(terminalId));
+            }
             int code = conn.getResponseCode();
             if (code == 404) {
                 throw new FetchException("server_not_published");
@@ -149,8 +161,12 @@ public final class RemoteManifestClient {
     }
 
     private static String readAll(HttpURLConnection conn) throws IOException {
+        InputStream stream = conn.getResponseCode() >= 400
+                ? conn.getErrorStream()
+                : conn.getInputStream();
+        if (stream == null) return "";
         try (BufferedReader r = new BufferedReader(new InputStreamReader(
-                conn.getInputStream(), StandardCharsets.UTF_8))) {
+                stream, StandardCharsets.UTF_8))) {
             StringBuilder sb = new StringBuilder();
             String line;
             while ((line = r.readLine()) != null) sb.append(line).append('\n');
@@ -158,7 +174,63 @@ public final class RemoteManifestClient {
         }
     }
 
+    // ---------- pairing ----------
+
+    /** Claims a 6-digit pairing code previously issued from the admin UI. */
+    public static PairResult claim(String rawBaseUrl, String code, String deviceName)
+            throws FetchException {
+        String baseUrl = normalizeBaseUrl(rawBaseUrl);
+        String endpoint = baseUrl + "/api/terminals/claim";
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(endpoint).openConnection();
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            JSONObject payload = new JSONObject();
+            payload.put("code", code);
+            payload.put("name", deviceName);
+            try (OutputStream out = conn.getOutputStream()) {
+                out.write(payload.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            int status = conn.getResponseCode();
+            String body = readAll(conn);
+            if (status >= 200 && status < 300) {
+                JSONObject root = new JSONObject(body);
+                return new PairResult(
+                        root.optLong("terminalId", 0L),
+                        root.optString("name", deviceName));
+            }
+            String detail = "";
+            try {
+                detail = new JSONObject(body).optString("error", "");
+            } catch (JSONException ignored) {
+                // Response body is not JSON; keep the generic rejection message.
+            }
+            throw new FetchException("pair_rejected:" + detail);
+        } catch (IOException ioe) {
+            throw new FetchException("connect_error:" + baseUrl);
+        } catch (JSONException je) {
+            throw new FetchException("parse_error");
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
     // ---------- data classes ----------
+
+    /** Result of a successful pairing claim. */
+    public static final class PairResult {
+        public final long terminalId;
+        public final String name;
+
+        PairResult(long terminalId, String name) {
+            this.terminalId = terminalId;
+            this.name = name;
+        }
+    }
 
     /** Parsed manifest payload. Never mutated after construction. */
     public static final class Manifest {
