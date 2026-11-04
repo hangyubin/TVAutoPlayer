@@ -153,27 +153,27 @@ public final class MainActivity extends ComponentActivity {
         remoteFetchInFlight = true;
         final String serverUrl = configStore.serverUrl();
         remoteFetcher.execute(() -> {
-            PlaybackConfiguration config;
+            final PlaybackConfiguration config;
+            final int version;
             try {
                 RemoteManifestClient.Manifest manifest = new RemoteManifestClient(serverUrl).fetch();
                 config = RemoteContentBridge.toLocalConfig(manifest);
+                version = manifest.contentVersion;
                 configStore.setRemoteLastFetchMillis(System.currentTimeMillis());
-                configStore.setRemoteContentVersion(manifest.contentVersion);
+                configStore.setRemoteContentVersion(version);
             } catch (RemoteManifestClient.FetchException e) {
                 String host = serverUrl.isEmpty()
                         ? getString(R.string.remote_not_set)
                         : serverUrl;
                 String detail = translateRemoteError(e.getMessage());
                 String msg = getString(R.string.remote_prefix, detail);
-                mainHandler.post(() -> renderRemoteError(host + "：" + detail, msg));
+                mainHandler.post(() -> renderRemoteError(host + ": " + detail, msg));
                 return;
             } finally {
                 remoteFetchInFlight = false;
             }
-            final PlaybackConfiguration finalConfig = config;
-            final int version = manifest != null ? manifest.contentVersion : 0;
             mainHandler.post(() -> {
-                if (finalConfig == null) {
+                if (config == null) {
                     renderRemoteError(
                             serverUrl.isEmpty()
                                     ? getString(R.string.remote_mode_label_short)
@@ -186,7 +186,7 @@ public final class MainActivity extends ComponentActivity {
                     return;
                 }
                 appliedRemoteVersion = version;
-                renderConfiguration(finalConfig, "remote:" + version);
+                renderConfiguration(config, "remote:" + version);
             });
         });
     }

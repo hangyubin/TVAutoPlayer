@@ -64,7 +64,9 @@ public final class RemoteContentBridge {
         for (RemoteManifestClient.ManifestItem it : items) {
             if (it == null || it.url == null || it.url.isEmpty()) continue;
             String name = it.kind == MediaKind.IMAGE
-? "Remote image #" + seq: "Remote video #" + seq;            out.add(new PlaylistItem(it.url, name, it.kind));
+                    ? "Remote image #" + seq
+                    : "Remote video #" + seq;
+            out.add(new PlaylistItem(it.url, name, it.kind));
             seq++;
         }
         return out;

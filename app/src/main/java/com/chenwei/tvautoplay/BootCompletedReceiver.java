@@ -17,24 +17,34 @@ public final class BootCompletedReceiver extends BroadcastReceiver {
             return;
         }
 
-        PlaybackConfiguration configuration = new PlaybackConfigStore(context).load();
-        ResolvedPlaylist effective = ScheduleResolver.resolve(
-                configuration.playlist(),
-                configuration.scheduledPlaylists(),
-                configuration.scheduleEnabled(),
-                ScheduleClock.currentMinuteOfDay()
-        );
-        int readableMediaCount = UriAccess.readableItems(
-                context,
-                effective.playlist()
-        ).size();
-        if (!PlaybackPolicy.shouldLaunchOnBoot(
-                configuration,
-                effective.playlist(),
-                readableMediaCount
-        )) {
-            Log.i(TAG, "Boot launch skipped because playback is not ready or auto-start is off");
-            return;
+        PlaybackConfigStore store = new PlaybackConfigStore(context);
+        PlaybackConfiguration configuration = store.load();
+
+        // Remote mode: the playlist comes from the CMS server, so the local
+        // playlist may legitimately be empty. Launch whenever auto-start is on
+        // and a server address has been configured.
+        boolean launchRemote = store.isRemoteModeEnabled()
+                && !store.serverUrl().isEmpty()
+                && configuration.autoStartEnabled();
+        if (!launchRemote) {
+            ResolvedPlaylist effective = ScheduleResolver.resolve(
+                    configuration.playlist(),
+                    configuration.scheduledPlaylists(),
+                    configuration.scheduleEnabled(),
+                    ScheduleClock.currentMinuteOfDay()
+            );
+            int readableMediaCount = UriAccess.readableItems(
+                    context,
+                    effective.playlist()
+            ).size();
+            if (!PlaybackPolicy.shouldLaunchOnBoot(
+                    configuration,
+                    effective.playlist(),
+                    readableMediaCount
+            )) {
+                Log.i(TAG, "Boot launch skipped because playback is not ready or auto-start is off");
+                return;
+            }
         }
 
         Intent launchIntent = new Intent(context, MainActivity.class)

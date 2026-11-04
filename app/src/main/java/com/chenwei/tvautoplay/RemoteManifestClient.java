@@ -43,7 +43,8 @@ public final class RemoteManifestClient {
         return baseUrl;
     }
 
-/** Returns on success; throws FetchException with a user-facing message on failure. */    public Manifest fetch() throws FetchException {
+    /** Returns on success; throws FetchException with a machine-readable code on failure. */
+    public Manifest fetch() throws FetchException {
         String endpoint = baseUrl + "/api/manifest";
         HttpURLConnection conn = null;
         try {
@@ -54,25 +55,31 @@ public final class RemoteManifestClient {
             conn.setInstanceFollowRedirects(true);
             int code = conn.getResponseCode();
             if (code == 404) {
-throw new FetchException("server_not_published");            }
+                throw new FetchException("server_not_published");
+            }
             if (code < 200 || code >= 300) {
-throw new FetchException("server_http_error:" + code);            }
+                throw new FetchException("server_http_error:" + code);
+            }
             String body = readAll(conn);
             return parse(body);
         } catch (IOException ioe) {
-throw new FetchException("connect_error:" + baseUrl);        } catch (JSONException je) {
-throw new FetchException("parse_error");        } finally {
+            throw new FetchException("connect_error:" + baseUrl);
+        } catch (JSONException je) {
+            throw new FetchException("parse_error");
+        } finally {
             if (conn != null) conn.disconnect();
         }
     }
 
     // ---------- JSON parsing ----------
 
-    Manifest parse(String raw) throws JSONException {
+    Manifest parse(String raw) throws JSONException, FetchException {
         JSONObject root = new JSONObject(raw);
         int schemaVersion = root.optInt("schemaVersion", -1);
         if (schemaVersion != SCHEMA_VERSION) {
-throw new JSONException("unsupported_schema_version:" + schemaVersion + ":" + SCHEMA_VERSION);        }
+            throw new FetchException(
+                    "unsupported_schema_version:" + schemaVersion + ":" + SCHEMA_VERSION);
+        }
         int contentVersion = root.optInt("contentVersion", 0);
         JSONObject defaultProgram = root.optJSONObject("defaultProgram");
         JSONArray schedules = root.optJSONArray("schedules");
@@ -149,13 +156,6 @@ throw new JSONException("unsupported_schema_version:" + schemaVersion + ":" + SC
             while ((line = r.readLine()) != null) sb.append(line).append('\n');
             return sb.toString();
         }
-    }
-
-    private static String safeBody(HttpURLConnection conn) {
-        try {
-            if (conn.getErrorStream() == null) return "";
-            return readAll(conn).trim();
-        } catch (Exception e) { return ""; }
     }
 
     // ---------- data classes ----------

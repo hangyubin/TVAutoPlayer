@@ -335,9 +335,13 @@ public final class SettingsActivity extends ComponentActivity {
 
     private String formatElapsed(long ms) {
         long s = ms / 1000;
-if (s < 5) return getString(R.string.remote_relative_time_just_now);if (s < 60) return getString(R.string.remote_relative_time_seconds, s);        long m = s / 60;
-if (m < 60) return getString(R.string.remote_relative_time_minutes, m);        long h = m / 60;
-return getString(R.string.remote_relative_time_hours, h);    }
+        if (s < 5) return getString(R.string.remote_relative_time_just_now);
+        if (s < 60) return getString(R.string.remote_relative_time_seconds, s);
+        long m = s / 60;
+        if (m < 60) return getString(R.string.remote_relative_time_minutes, m);
+        long h = m / 60;
+        return getString(R.string.remote_relative_time_hours, h);
+    }
 
     private void editServerUrl() {
         final EditText input = new EditText(this);
@@ -352,7 +356,8 @@ return getString(R.string.remote_relative_time_hours, h);    }
                     String raw = input.getText().toString().trim();
                     if (raw.isEmpty()) {
                         configStore.setServerUrl("");
-// Clear remote mode when the address is cleared                        configStore.setRemoteModeEnabled(false);
+                        // Clear remote mode when the address is cleared
+                        configStore.setRemoteModeEnabled(false);
                     } else {
                         configStore.setServerUrl(raw);
                     }
