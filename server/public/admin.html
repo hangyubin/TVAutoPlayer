@@ -95,7 +95,7 @@
 <section id="tab-media" class="card">
   <h2>媒体库</h2>
   <div class="row">
-    <input type="file" id="file" class="grow" accept="image/*,video/*" multiple>
+    <input type="file" id="file" class="grow" accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.heif,.mp4,.mkv,.webm,.ts,.m4v,.mov" multiple>
     <button class="btn" id="uploadBtn">上传</button>
     <button class="btn sub" id="uploadCancel" style="display:none">取消</button>
   </div>
@@ -250,7 +250,7 @@ function setPct(p) { fill().classList.remove('indeterminate'); fill().style.widt
 function renderQueue(items) {
   queues().innerHTML = items.map((it, i) =>
     `<div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:2px 0">
-      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.file.name}">${i+1}. ${it.file.name}</span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(it.file.name)}">${i+1}. ${esc(it.file.name)}</span>
       <span class="tag" style="background:${it.tagBg||'#eef1f3'};color:${it.tagColor||'#1f2329'}">${it.label}</span>
     </div>`).join('');
 }
@@ -260,8 +260,9 @@ function uploadOne(file, idx, total, items) {
     const fd = new FormData(); fd.append('file', file);
     const xhr = new XMLHttpRequest();
     queueXhrs.push(xhr);
-    xhr.timeout = 120_000;
-    let lastLoaded = 0, lastT = Date.now();
+    // 大文件放宽超时：每 MB 1 秒，下限 5 分钟、上限 15 分钟
+    xhr.timeout = Math.min(900_000, Math.max(300_000, file.size / 1e6 * 1000));
+    let lastLoaded = 0, lastT = Date.now(), lastRender = 0;
     renderQueue(items);
     state().textContent = `[${idx+1}/${total}] 上传 ${file.name}`;
     right().textContent = fmtSize(file.size);
@@ -278,6 +279,9 @@ function uploadOne(file, idx, total, items) {
         lastLoaded = e.loaded; lastT = now;
         right().textContent = `${Math.round(p)}% · ${fmtSize(e.loaded)}/${fmtSize(e.total)} · ${fmtSpeed(speed)}`;
         items[idx].label = `${Math.round(p)}%`;
+        // 进度事件非常频繁，150ms 节流一次再重绘队列
+        if (now - lastRender < 150) return;
+        lastRender = now;
         renderQueue(items);
       }
     };

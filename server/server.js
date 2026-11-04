@@ -114,22 +114,86 @@ const jsonBody = async (req) => {
   catch { throw new Error('请求体不是合法 JSON'); }
 };
 
-// 最小 multipart 解析（单文件字段 file）
-function parseMultipart(buf, contentType) {
-  const m = /boundary=(?:"([^"]+)"|([^\s;]+))/.exec(contentType);
-  if (!m) throw new Error('缺少 boundary');
-  const boundary = Buffer.from(`--${m[1] || m[2]}`);
-  const start = buf.indexOf(boundary);
-  const headerEnd = buf.indexOf('\r\n\r\n', start);
-  if (start < 0 || headerEnd < 0) throw new Error('multipart 格式错误');
-  const header = buf.slice(start, headerEnd).toString('utf8');
-  const fm = /filename="([^"]*)"/.exec(header);
-  if (!fm) throw new Error('缺少文件名');
-  const dataEnd = buf.indexOf(boundary, headerEnd);
-  // 去掉结尾的 \r\n
-  const data = buf.slice(headerEnd + 4, dataEnd - 2);
-  return { filename: path.basename(fm[1]), data };
+// 流式保存上传：multipart 请求体直接写入临时文件，避免大文件占用内存
+function saveUpload(req) {
+  return new Promise((resolve, reject) => {
+    const contentType = req.headers['content-type'] || '';
+    const m = /boundary=(?:"([^"]+)"|([^\s;]+))/.exec(contentType);
+    if (!m) { req.resume(); return reject(new Error('缺少 boundary')); }
+    const boundary = `--${m[1] || m[2]}`;
+    const tmp = path.join(MEDIA_DIR, `.upload-${crypto.randomUUID()}.tmp`);
+    const out = fs.createWriteStream(tmp);
+    let size = 0, failed = false;
+    const fail = (e) => {
+      if (failed) return;
+      failed = true;
+      out.destroy();
+      fs.rmSync(tmp, { force: true });
+      reject(e);
+    };
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > MAX_UPLOAD) { fail(new Error('文件过大')); req.destroy(); }
+    });
+    req.on('error', fail);
+    out.on('error', fail);
+    out.on('finish', () => {
+      if (failed) return;
+      try {
+        resolve(locateMultipartFile(tmp, size, boundary));
+      } catch (e) {
+        fs.rmSync(tmp, { force: true });
+        reject(e);
+      }
+    });
+    req.pipe(out);
+  });
 }
+
+// 从已落盘的 multipart 体中定位 file 字段的数据区间（只读头部与尾部小块）
+function locateMultipartFile(tmp, totalSize, boundary) {
+  const fd = fs.openSync(tmp, 'r');
+  try {
+    const head = Buffer.alloc(Math.min(totalSize, 64 * 1024));
+    fs.readSync(fd, head, 0, head.length, 0);
+    if (head.indexOf(boundary) !== 0) throw new Error('multipart 格式错误');
+    const headerEnd = head.indexOf('\r\n\r\n');
+    if (headerEnd < 0) throw new Error('multipart 格式错误');
+    const header = head.slice(0, headerEnd).toString('utf8');
+    const fm = /filename="([^"]*)"/.exec(header);
+    if (!fm) throw new Error('缺少文件名');
+    const start = headerEnd + 4;
+    // 结尾形如 \r\n--boundary--\r\n（部分客户端省略末尾换行）
+    const tailLen = Math.max(0, Math.min(totalSize - start, boundary.length + 16));
+    const tail = Buffer.alloc(tailLen);
+    fs.readSync(fd, tail, 0, tailLen, totalSize - tailLen);
+    const idx = tail.indexOf('\r\n' + boundary);
+    if (idx < 0) throw new Error('multipart 结尾格式错误');
+    const end = totalSize - tailLen + idx - 1;
+    if (end < start) throw new Error('上传内容为空');
+    return {
+      filename: path.basename(fm[1]), tmp,
+      start, end, size: end - start + 1,
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+const sha256OfRange = (file, start, end) => new Promise((resolve, reject) => {
+  const h = crypto.createHash('sha256');
+  fs.createReadStream(file, { start, end })
+    .on('data', (c) => h.update(c))
+    .on('end', () => resolve(h.digest('hex')))
+    .on('error', reject);
+});
+
+const copyRange = (src, start, end, dest) => new Promise((resolve, reject) => {
+  fs.createReadStream(src, { start, end })
+    .pipe(fs.createWriteStream(dest))
+    .on('finish', resolve)
+    .on('error', reject);
+});
 
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res) => {
@@ -233,17 +297,21 @@ const server = http.createServer(async (req, res) => {
       return ok(res, db.prepare('SELECT * FROM media ORDER BY id DESC').all());
     }
     if (p === '/api/media' && req.method === 'POST') {
-      const { filename, data } = parseMultipart(await readBody(req), req.headers['content-type'] || '');
-      const kind = kindOf(filename);
-      if (!kind) return bad(res, '不支持的格式（仅图片/视频）');
-      const sha256 = crypto.createHash('sha256').update(data).digest('hex');
+      const up = await saveUpload(req);
+      const kind = kindOf(up.filename);
+      if (!kind) { fs.rmSync(up.tmp, { force: true }); return bad(res, '不支持的格式（仅图片/视频）'); }
+      const sha256 = await sha256OfRange(up.tmp, up.start, up.end);
       const exists = db.prepare('SELECT * FROM media WHERE sha256 = ? AND kind = ?').get(sha256, kind);
-      if (exists) return ok(res, { ...exists, duplicated: true });
-      const storeName = `${sha256.slice(0, 16)}${path.extname(filename).toLowerCase()}`;
-      fs.writeFileSync(path.join(MEDIA_DIR, storeName), data);
+      if (exists) {
+        fs.rmSync(up.tmp, { force: true });
+        return ok(res, { ...exists, duplicated: true });
+      }
+      const storeName = `${sha256.slice(0, 16)}${path.extname(up.filename).toLowerCase()}`;
+      await copyRange(up.tmp, up.start, up.end, path.join(MEDIA_DIR, storeName));
+      fs.rmSync(up.tmp, { force: true });
       const info = db.prepare(
         'INSERT INTO media (filename, orig_name, sha256, kind, size) VALUES (?,?,?,?,?)'
-      ).run(storeName, filename.slice(0, 120), sha256, kind, data.length);
+      ).run(storeName, up.filename.slice(0, 120), sha256, kind, up.size);
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
     let m = /^\/api\/media\/(\d+)$/.exec(p);
