@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon layer (Android 13+): single-colour silhouette of the TV mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M36,38h36a6,6 0 0 1 6,6v20a6,6 0 0 1 -6,6h-36a6,6 0 0 1 -6,-6v-20a6,6 0 0 1 6,-6zM39,41h30a3,3 0 0 1 3,3v16a3,3 0 0 1 -3,3h-30a3,3 0 0 1 -3,-3v-16a3,3 0 0 1 3,-3z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M49,46l14,8 -14,8z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M52,72h4v5h-4z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,77h20v3h-20z" />
+</vector>

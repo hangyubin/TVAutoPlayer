@@ -1,11 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Legacy launcher icon (API 23-25); adaptive icons take over on API 26+. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#08111F" android:pathData="M0,0h108v108h-108z" />
-    <path android:fillColor="#2DD4BF" android:pathData="M16,22h76a8,8 0,0 1,8 8v48a8,8 0,0 1,-8 8h-76a8,8 0,0 1,-8 -8v-48a8,8 0,0 1,8 -8z" />
-    <path android:fillColor="#08111F" android:pathData="M45,38l26,16 -26,16z" />
-    <path android:fillColor="#B8C4D6" android:pathData="M38,90h32v6h-32z" />
+    <path
+        android:fillColor="#08111F"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#16324A"
+        android:pathData="M20,28h68a10,10 0 0 1 10,10v36a10,10 0 0 1 -10,10h-68a10,10 0 0 1 -10,-10v-36a10,10 0 0 1 10,-10z" />
+    <path
+        android:fillColor="#2DD4BF"
+        android:pathData="M25,33h58a6,6 0 0 1 6,6v30a6,6 0 0 1 -6,6h-58a6,6 0 0 1 -6,-6v-30a6,6 0 0 1 6,-6z" />
+    <path
+        android:fillColor="#08111F"
+        android:pathData="M42,44l22,12 -22,12z" />
+    <path
+        android:fillColor="#B8C4D6"
+        android:pathData="M50,78h8v8h-8z" />
+    <path
+        android:fillColor="#B8C4D6"
+        android:pathData="M38,86h32v4h-32z" />
 </vector>

@@ -19,6 +19,7 @@ public final class PlaybackConfigStore {
     private static final String KEY_SCALE_MODE = "scale_mode";
     private static final String KEY_IMAGE_DURATION = "image_duration";
     private static final String KEY_HINT_SHOWN = "settings_hint_shown";
+    private static final String KEY_FIRST_LAUNCH_PROMPT = "first_launch_prompt_shown";
     // ----- Remote CMS server -----
     private static final String KEY_REMOTE_MODE = "remote_mode";
     private static final String KEY_SERVER_URL = "server_url";
@@ -109,6 +110,15 @@ public final class PlaybackConfigStore {
 
     public void markSettingsHintShown() {
         preferences.edit().putBoolean(KEY_HINT_SHOWN, true).apply();
+    }
+
+    /** True once the app has auto-opened settings on its very first launch. */
+    public boolean isFirstLaunchPromptShown() {
+        return preferences.getBoolean(KEY_FIRST_LAUNCH_PROMPT, false);
+    }
+
+    public void markFirstLaunchPromptShown() {
+        preferences.edit().putBoolean(KEY_FIRST_LAUNCH_PROMPT, true).apply();
     }
 
     // ----- Remote CMS server -----

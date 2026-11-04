@@ -350,8 +350,12 @@ public final class MainActivity extends ComponentActivity {
                 return;
             }
             showSelectionRequired(decision);
-            if (!settingsOpen && !selectionPromptAttempted) {
+            // Open settings automatically on first launch only; later launches show the
+            // hint panel instead of hijacking the TV screen every boot.
+            if (!settingsOpen && !selectionPromptAttempted
+                    && !configStore.isFirstLaunchPromptShown()) {
                 selectionPromptAttempted = true;
+                configStore.markFirstLaunchPromptShown();
                 openSettings();
             }
             return;
