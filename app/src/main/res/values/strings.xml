@@ -107,4 +107,16 @@
         <item quantity="one">已跳过 %1$d 个无法读取的媒体文件。</item>
         <item quantity="other">已跳过 %1$d 个无法读取的媒体文件。</item>
     </plurals>
+    <!-- Remote CMS server strings -->
+    <string name="remote_mode_label">远程模式（从 CMS 服务器拉取）</string>
+    <string name="server_url_default">服务器地址：未设置</string>
+    <string name="server_url_value">服务器地址：%1$s</string>
+    <string name="server_url_hint">请输入服务器 IP 或域名（例如 192.168.2.100），不需要 http:// 前缀。</string>
+    <string name="server_url_dialog_title">输入服务器地址</string>
+    <string name="remote_status_local">当前模式：本地播放（从电视或 U 盘）</string>
+    <string name="remote_status_connected">已连接远程服务器 v%1$d · 上次更新 %2$s 前</string>
+    <string name="remote_status_disconnected">远程模式已启用，但还没连上服务器</string>
+    <string name="remote_mode_need_server_url">开启远程模式前请先设置服务器地址。</string>
+    <string name="remote_server_url_empty">请输入服务器地址。</string>
+    <string name="remote_server_url_invalid">服务器地址格式不对。</string>
 </resources>

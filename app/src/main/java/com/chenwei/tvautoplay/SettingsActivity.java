@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -29,6 +30,9 @@ public final class SettingsActivity extends ComponentActivity {
     private PlaybackConfigStore configStore;
     private TextView selectedVideo;
     private CheckBox autoStart;
+    private CheckBox remoteMode;
+    private Button serverUrlButton;
+    private TextView remoteStatus;
     private Button soundButton;
     private Button scaleButton;
     private Button imageDurationButton;
@@ -70,6 +74,9 @@ public final class SettingsActivity extends ComponentActivity {
 
         selectedVideo = findViewById(R.id.selected_video_value);
         autoStart = findViewById(R.id.auto_start_checkbox);
+        remoteMode = findViewById(R.id.remote_mode_checkbox);
+        serverUrlButton = findViewById(R.id.server_url_button);
+        remoteStatus = findViewById(R.id.remote_status_value);
         soundButton = findViewById(R.id.sound_button);
         scaleButton = findViewById(R.id.scale_button);
         imageDurationButton = findViewById(R.id.image_duration_button);
@@ -88,6 +95,16 @@ public final class SettingsActivity extends ComponentActivity {
         findViewById(R.id.back_to_player_button).setOnClickListener(view -> finish());
         autoStart.setOnClickListener(view ->
                 configStore.setAutoStartEnabled(autoStart.isChecked()));
+        remoteMode.setOnClickListener(view -> {
+            if (remoteMode.isChecked() && configStore.serverUrl().isEmpty()) {
+                Toast.makeText(this, R.string.remote_mode_need_server_url, Toast.LENGTH_LONG).show();
+                remoteMode.setChecked(false);
+                return;
+            }
+            configStore.setRemoteModeEnabled(remoteMode.isChecked());
+            refreshValues();
+        });
+        serverUrlButton.setOnClickListener(view -> editServerUrl());
         soundButton.setOnClickListener(view -> toggleSound());
         scaleButton.setOnClickListener(view -> toggleScaleMode());
         imageDurationButton.setOnClickListener(view -> toggleImageDuration());
@@ -274,6 +291,23 @@ public final class SettingsActivity extends ComponentActivity {
                 ? formatPlaylist(configuration.playlist())
                 : getString(R.string.not_selected));
         autoStart.setChecked(configuration.autoStartEnabled());
+        remoteMode.setChecked(configStore.isRemoteModeEnabled());
+        String url = configStore.serverUrl();
+        serverUrlButton.setText(url.isEmpty()
+                ? getString(R.string.server_url_default)
+                : getString(R.string.server_url_value, url));
+        if (configStore.isRemoteModeEnabled()) {
+            int v = configStore.remoteContentVersion();
+            if (v > 0) {
+                long last = System.currentTimeMillis() - configStore.remoteLastFetchMillis();
+                String ago = formatElapsed(last);
+                remoteStatus.setText(getString(R.string.remote_status_connected, v, ago));
+            } else {
+                remoteStatus.setText(R.string.remote_status_disconnected);
+            }
+        } else {
+            remoteStatus.setText(R.string.remote_status_local);
+        }
         soundButton.setText(configuration.soundEnabled()
                 ? R.string.sound_on
                 : R.string.sound_off);
@@ -297,6 +331,39 @@ public final class SettingsActivity extends ComponentActivity {
                                 ? R.string.schedule_master_on
                                 : R.string.schedule_master_off)
                 ));
+    }
+
+    private String formatElapsed(long ms) {
+        long s = ms / 1000;
+        if (s < 5) return "刚刚";
+        if (s < 60) return s + " 秒";
+        long m = s / 60;
+        if (m < 60) return m + " 分";
+        long h = m / 60;
+        return h + " 小时";
+    }
+
+    private void editServerUrl() {
+        final EditText input = new EditText(this);
+        input.setHint(R.string.server_url_hint);
+        input.setText(configStore.serverUrl());
+        input.setSingleLine(true);
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.server_url_dialog_title)
+                .setView(input)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.save, (dialog, which) -> {
+                    String raw = input.getText().toString().trim();
+                    if (raw.isEmpty()) {
+                        configStore.setServerUrl("");
+                        // 地址被清空时顺便关远程模式
+                        configStore.setRemoteModeEnabled(false);
+                    } else {
+                        configStore.setServerUrl(raw);
+                    }
+                    refreshValues();
+                })
+                .show();
     }
 
     private String formatPlaylist(List<PlaylistItem> playlist) {

@@ -12,3 +12,8 @@ captures/
 *.apk
 *.aab
 *.log
+# CMS server runtime data
+server/data.db
+server/data.db-*
+server/media/
+server/public/uploads/

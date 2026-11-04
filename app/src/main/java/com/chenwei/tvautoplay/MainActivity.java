@@ -31,6 +31,8 @@ import androidx.media3.ui.PlayerView;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Full-screen TV playback surface for mixed image/video playlists. */
 @OptIn(markerClass = UnstableApi.class)
@@ -39,6 +41,12 @@ public final class MainActivity extends ComponentActivity {
 
     private final Handler scheduleHandler = new Handler(Looper.getMainLooper());
     private final Runnable scheduleCheck = this::checkForScheduleTransition;
+    private final ExecutorService remoteFetcher = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "RemoteManifest");
+        t.setDaemon(true);
+        return t;
+    });
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private PlayerView playerView;
     private View emptyPanel;
     private View errorPanel;
@@ -54,6 +62,9 @@ public final class MainActivity extends ComponentActivity {
     private String activePlaylistSourceId;
     private boolean activityStarted;
     private ActivityResultLauncher<Intent> settingsLauncher;
+    /** Monotonic version of the config last rendered; remote version is pushed here too. */
+    private int appliedRemoteVersion;
+    private boolean remoteFetchInFlight;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -128,16 +139,78 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void startConfiguredPlayback() {
+        if (configStore.isRemoteModeEnabled()) {
+            fetchAndApplyRemoteManifest(false);
+            return;
+        }
         PlaybackConfiguration configuration = configStore.load();
+        renderConfiguration(configuration, null);
+    }
+
+    /** Non-blocking; runs on background thread, renders on main. */
+    private void fetchAndApplyRemoteManifest(boolean force) {
+        if (remoteFetchInFlight) return;
+        remoteFetchInFlight = true;
+        final String serverUrl = configStore.serverUrl();
+        remoteFetcher.execute(() -> {
+            PlaybackConfiguration config;
+            try {
+                RemoteManifestClient.Manifest manifest = new RemoteManifestClient(serverUrl).fetch();
+                config = RemoteContentBridge.toLocalConfig(manifest);
+                configStore.setRemoteLastFetchMillis(System.currentTimeMillis());
+                configStore.setRemoteContentVersion(manifest.contentVersion);
+            } catch (RemoteManifestClient.FetchException e) {
+                String host = serverUrl.isEmpty() ? "服务器地址未设置" : serverUrl;
+                String msg = "远程模式：" + e.getMessage();
+                mainHandler.post(() -> renderRemoteError(host + "：" + e.getMessage(), msg));
+                return;
+            } finally {
+                remoteFetchInFlight = false;
+            }
+            final PlaybackConfiguration finalConfig = config;
+            final int version = manifest != null ? manifest.contentVersion : 0;
+            mainHandler.post(() -> {
+                if (finalConfig == null) {
+                    renderRemoteError(serverUrl.isEmpty() ? "远程模式" : serverUrl,
+                            "manifest 没有任何可播放的媒体。请先在管理后台上传并发布。");
+                    return;
+                }
+                if (!force && version > 0 && version <= appliedRemoteVersion) {
+                    // contentVersion 没变 — 不重新渲染，只继续播放
+                    return;
+                }
+                appliedRemoteVersion = version;
+                renderConfiguration(finalConfig, "remote:" + version);
+            });
+        });
+    }
+
+    private void renderRemoteError(String title, String detail) {
+        showPlayer(); // make space for a toast
+        Toast.makeText(this, "远程模式：" + detail, Toast.LENGTH_LONG).show();
+        // 如果当前没有正在播放的内容，把错误面板换上来
+        if (player == null || !player.isPlaying()) {
+            releasePlayer();
+            playerView.setVisibility(View.GONE);
+            emptyPanel.setVisibility(View.VISIBLE);
+            emptyMessage.setText(title + "\n" + detail);
+        }
+    }
+
+    /** Unified playback renderer used by both local and remote paths. */
+    private void renderConfiguration(PlaybackConfiguration configuration, String sourceTag) {
         ResolvedPlaylist effective = resolveEffectivePlaylist(configuration);
-        activePlaylistSourceId = effective.sourceId();
-        List<PlaylistItem> readableItems = UriAccess.readableItems(
-                this,
-                effective.playlist()
-        );
+        activePlaylistSourceId = sourceTag != null ? sourceTag : effective.sourceId();
+        List<PlaylistItem> items = effective.playlist();
+
+        // In remote mode we skip UriAccess.readableItems() — every item is an
+        // absolute http:// URL that ExoPlayer streams directly, no ContentResolver.
+        List<PlaylistItem> playable = configStore.isRemoteModeEnabled()
+                ? items
+                : UriAccess.readableItems(this, items);
         PlaybackDecision decision = PlaybackPolicy.decide(
                 effective.playlist(),
-                readableItems.size()
+                playable.size()
         );
         if (decision != PlaybackDecision.READY) {
             releasePlayer();
@@ -156,9 +229,11 @@ public final class MainActivity extends ComponentActivity {
             return;
         }
 
-        if (!unreadableNoticeShown && readableItems.size() < effective.playlist().size()) {
+        if (!configStore.isRemoteModeEnabled()
+                && !unreadableNoticeShown
+                && playable.size() < effective.playlist().size()) {
             unreadableNoticeShown = true;
-            int unreadableCount = effective.playlist().size() - readableItems.size();
+            int unreadableCount = effective.playlist().size() - playable.size();
             Toast.makeText(
                     this,
                     getResources().getQuantityString(
@@ -173,7 +248,7 @@ public final class MainActivity extends ComponentActivity {
         showPlayer();
         releasePlayer();
         consecutivePlaybackFailures = 0;
-        activePlaylistSize = readableItems.size();
+        activePlaylistSize = playable.size();
         player = new ExoPlayer.Builder(this)
                 .setAudioAttributes(
                         new AudioAttributes.Builder()
@@ -204,8 +279,8 @@ public final class MainActivity extends ComponentActivity {
                 ? AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 : AspectRatioFrameLayout.RESIZE_MODE_FIT);
         playerView.setPlayer(player);
-        List<MediaItem> mediaItems = new ArrayList<>(readableItems.size());
-        for (PlaylistItem item : readableItems) {
+        List<MediaItem> mediaItems = new ArrayList<>(playable.size());
+        for (PlaylistItem item : playable) {
             mediaItems.add(PlaybackMediaItemFactory.create(
                     item,
                     configuration.imageDuration()
@@ -232,6 +307,12 @@ public final class MainActivity extends ComponentActivity {
 
     private void checkForScheduleTransition() {
         if (!activityStarted) {
+            return;
+        }
+        // 远程模式顺便刷新 manifest
+        if (configStore.isRemoteModeEnabled()) {
+            fetchAndApplyRemoteManifest(false);
+            scheduleHandler.postDelayed(scheduleCheck, SCHEDULE_CHECK_INTERVAL_MS);
             return;
         }
         PlaybackConfiguration configuration = configStore.load();
@@ -345,5 +426,13 @@ public final class MainActivity extends ComponentActivity {
                         | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                         | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         );
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        scheduleHandler.removeCallbacks(scheduleCheck);
+        remoteFetcher.shutdownNow();
+        releasePlayer();
     }
 }

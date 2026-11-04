@@ -19,6 +19,11 @@ public final class PlaybackConfigStore {
     private static final String KEY_SCALE_MODE = "scale_mode";
     private static final String KEY_IMAGE_DURATION = "image_duration";
     private static final String KEY_HINT_SHOWN = "settings_hint_shown";
+    // ----- Remote CMS server -----
+    private static final String KEY_REMOTE_MODE = "remote_mode";
+    private static final String KEY_SERVER_URL = "server_url";
+    private static final String KEY_REMOTE_VERSION = "remote_content_version";
+    private static final String KEY_REMOTE_LAST_FETCH = "remote_last_fetch_ms";
 
     private final SharedPreferences preferences;
 
@@ -104,6 +109,40 @@ public final class PlaybackConfigStore {
 
     public void markSettingsHintShown() {
         preferences.edit().putBoolean(KEY_HINT_SHOWN, true).apply();
+    }
+
+    // ----- Remote CMS server -----
+
+    public boolean isRemoteModeEnabled() {
+        return preferences.getBoolean(KEY_REMOTE_MODE, false);
+    }
+
+    public void setRemoteModeEnabled(boolean enabled) {
+        preferences.edit().putBoolean(KEY_REMOTE_MODE, enabled).apply();
+    }
+
+    public String serverUrl() {
+        return preferences.getString(KEY_SERVER_URL, "");
+    }
+
+    public void setServerUrl(String url) {
+        preferences.edit().putString(KEY_SERVER_URL, url == null ? "" : url.trim()).apply();
+    }
+
+    public int remoteContentVersion() {
+        return preferences.getInt(KEY_REMOTE_VERSION, 0);
+    }
+
+    public void setRemoteContentVersion(int version) {
+        preferences.edit().putInt(KEY_REMOTE_VERSION, version).apply();
+    }
+
+    public long remoteLastFetchMillis() {
+        return preferences.getLong(KEY_REMOTE_LAST_FETCH, 0L);
+    }
+
+    public void setRemoteLastFetchMillis(long ts) {
+        preferences.edit().putLong(KEY_REMOTE_LAST_FETCH, ts).apply();
     }
 
     private List<PlaylistItem> loadPlaylist() {

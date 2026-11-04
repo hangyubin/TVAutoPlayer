@@ -1,0 +1,9 @@
+{
+  "name": "tvautoplayer-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TVAutoPlayer 局域网内容管理服务端（零依赖，Node >= 22.5）",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

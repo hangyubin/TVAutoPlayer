@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TVAutoPlayer 管理后台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14px/1.6 system-ui, "PingFang SC", sans-serif; background: #f4f5f7; color: #1f2329; }
+  header { background: #16633c; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button { background: transparent; color: #d7e9de; border: 1px solid transparent; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  nav button.on { background: #fff; color: #16633c; font-weight: 600; }
+  main { max-width: 980px; margin: 20px auto; padding: 0 16px; }
+  .card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .card h2 { font-size: 15px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th, td { padding: 8px 6px; border-bottom: 1px solid #eee; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  th { color: #646a73; font-weight: 500; font-size: 13px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; }
+  .row > * { flex: 0 0 auto; }
+  .row .grow { flex: 1 1 auto; min-width: 0; }
+  input, select { padding: 6px 8px; border: 1px solid #d0d3d6; border-radius: 6px; font-size: 14px; min-width: 0; }
+  input[type=number] { width: 70px; }
+  input[type=file] { max-width: 260px; }
+  .btn { padding: 6px 12px; border: none; border-radius: 6px; background: #16633c; color: #fff; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  .btn.sub { background: #eef1f3; color: #1f2329; }
+  .btn.warn { background: #b71c1c; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef1f3; }
+  .tag.img { background: #e3f0e8; color: #16633c; }
+  .tag.vid { background: #e6ecf5; color: #1d4e89; }
+  .muted { color: #8f959e; font-size: 13px; }
+  #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: #1f2329; color: #fff; padding: 8px 16px; border-radius: 6px; display: none; z-index: 9; }
+  .hidden { display: none !important; }
+  /* 预览弹窗 */
+  #preview { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; z-index: 10; cursor: zoom-out; }
+  #preview.show { display: flex; }
+  #preview img, #preview video { max-width: 92vw; max-height: 88vh; background: #000; border-radius: 4px; cursor: default; }
+  #preview .close-btn { position: fixed; top: 16px; right: 20px; color: #fff; font-size: 28px; cursor: pointer; line-height: 1; padding: 4px 12px; border: 1px solid rgba(255,255,255,.3); border-radius: 4px; }
+  .thumb { width: 56px; height: 40px; object-fit: cover; border-radius: 3px; background: #eef1f3; cursor: zoom-in; display: inline-block; vertical-align: middle; }
+  .thumb.vid { background: #e6ecf5; color: #1d4e89; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .thumb-link { color: #16633c; cursor: zoom-in; text-decoration: underline; }
+  /* 登录 */
+  #loginForm { max-width: 340px; margin: 80px auto 0; padding: 28px; background: #fff; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+  #loginForm h2 { font-size: 16px; margin-bottom: 16px; text-align: center; color: #16633c; }
+  #loginForm .row { margin-bottom: 12px; }
+  #loginForm input { width: 100%; }
+  #loginForm .btn { width: 100%; padding: 9px; font-size: 14px; }
+  #loginForm .hint { color: #8f959e; font-size: 12px; margin-top: 8px; text-align: center; }
+  #userPanel { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  #userPanel .who { color: #d7e9de; font-size: 13px; }
+  #userPanel button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+  /* 改密码弹窗 */
+  #pwdModal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 11; }
+  #pwdModal.show { display: flex; }
+  #pwdModal .box { background: #fff; border-radius: 10px; padding: 20px; width: 320px; box-shadow: 0 12px 30px rgba(0,0,0,.2); }
+  #pwdModal h3 { font-size: 15px; margin-bottom: 14px; }
+  #pwdModal input { width: 100%; margin-bottom: 10px; }
+  #pwdModal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  /* 上传进度 */
+  #uploadBox { margin-top: 10px; display: none; }
+  #uploadBox.show { display: block; }
+  #uploadBox .bar-track { height: 14px; background: #eef1f3; border-radius: 7px; overflow: hidden; }
+  #uploadBox .bar-fill { height: 100%; width: 0; background: linear-gradient(90deg, #16633c, #34a86a); border-radius: 7px; transition: width .25s ease; }
+  #uploadBox .bar-fill.indeterminate { width: 40%; animation: prog 1.2s linear infinite; }
+  @keyframes prog { 0%{transform:translateX(-100%)} 100%{transform:translateX(350%)} }
+  #uploadBox .info { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; color: #646a73; }
+  #uploadBox .state { font-weight: 600; color: #16633c; }
+  #uploadBox .state.err { color: #b71c1c; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TVAutoPlayer 管理后台</h1>
+  <nav>
+    <button data-tab="media" class="on">媒体库</button>
+    <button data-tab="program">节目单</button>
+    <button data-tab="schedules">时段</button>
+    <button data-tab="publish">发布</button>
+    <button data-tab="terminals">终端</button>
+  </nav>
+  <div id="userPanel" class="hidden">
+    <span class="who" id="whoLabel"></span>
+    <button id="openPwd">改密码</button>
+    <button id="logoutBtn">退出</button>
+  </div>
+</header>
+<div id="toast"></div>
+<main>
+
+<section id="tab-media" class="card">
+  <h2>媒体库</h2>
+  <div class="row">
+    <input type="file" id="file" class="grow" accept="image/*,video/*" multiple>
+    <button class="btn" id="uploadBtn">上传</button>
+    <button class="btn sub" id="uploadCancel" style="display:none">取消</button>
+  </div>
+  <div id="uploadBox">
+    <div class="bar-track"><div class="bar-fill indeterminate" id="barFill"></div></div>
+    <div class="info">
+      <span class="state" id="upState">上传中...</span>
+      <span id="upRight"></span>
+    </div>
+    <div id="queues" style="margin-top:10px;max-height:160px;overflow-y:auto"></div>
+  </div>
+  <p class="muted" style="margin:8px 0">支持 jpg/png/webp/bmp/heic 图片，mp4/mkv/webm/ts 视频；按内容哈希去重。</p>
+  <table><thead><tr>
+    <th style="width:60px">缩略图</th><th>文件名</th><th style="width:70px">类型</th>
+    <th style="width:90px">大小</th><th style="width:130px">操作</th>
+  </tr></thead><tbody id="mediaList"></tbody></table>
+</section>
+
+<section id="tab-program" class="card hidden">
+  <h2>默认节目单（无时段命中时播放）</h2>
+  <div class="row">
+    <select id="progMedia" class="grow"></select>
+    <input type="number" id="progDur" min="1" placeholder="秒">
+    <button class="btn" id="progAdd">添加</button>
+    <button class="btn" id="progSave">保存</button>
+  </div>
+  <p class="muted" style="margin:8px 0">“秒”仅对图片生效，留空使用终端默认时长。</p>
+  <table><thead><tr>
+    <th style="width:44px">#</th><th>文件</th><th style="width:80px">时长</th><th style="width:150px">排序/操作</th>
+  </tr></thead><tbody id="progList"></tbody></table>
+</section>
+
+<section id="tab-schedules" class="card hidden">
+  <h2>时段计划（命中时段自动切换，30 分钟步进，不可重叠）</h2>
+  <div class="row">
+    <select id="schStart"></select><span>至</span><select id="schEnd"></select>
+    <select id="schMedia" class="grow"></select>
+    <input type="number" id="schDur" min="1" placeholder="秒">
+    <button class="btn" id="schAdd">添加时段</button>
+  </div>
+  <div id="schList"></div>
+</section>
+
+<section id="tab-publish" class="card hidden">
+  <h2>发布与版本</h2>
+  <div class="row">
+    <button class="btn" id="pubBtn">发布新版本</button>
+    <span id="curVer" class="muted"></span>
+  </div>
+  <table style="margin-top:12px"><thead><tr>
+    <th style="width:90px">版本</th><th>发布时间(UTC)</th><th style="width:80px">操作</th>
+  </tr></thead><tbody id="verList"></tbody></table>
+  <p class="muted" style="margin-top:8px">电视端轮询地址：<code>GET /api/manifest</code>，媒体地址：<code>/media/&lt;file&gt;</code></p>
+</section>
+
+<section id="tab-terminals" class="card hidden">
+  <h2>终端配对</h2>
+  <div class="row">
+    <input id="termName" class="grow" placeholder="终端名称，如：大厅左屏">
+    <button class="btn" id="genCode">生成配对码</button>
+  </div>
+  <table style="margin-top:12px"><thead><tr>
+    <th>名称</th><th style="width:110px">配对码</th><th style="width:80px">状态</th><th style="width:110px">操作</th>
+  </tr></thead><tbody id="termList"></tbody></table>
+</section>
+
+</main>
+<!-- 预览弹窗 -->
+<div id="preview"><span class="close-btn" onclick="closePreview()">× 关闭</span></div>
+
+<!-- 登录表单 -->
+<form id="loginForm" class="hidden" onsubmit="return false">
+  <h2>TVAutoPlayer 管理后台登录</h2>
+  <div class="row"><input id="loginUser" placeholder="用户名" value="admin" autocomplete="username"></div>
+  <div class="row"><input id="loginPass" type="password" placeholder="密码" autocomplete="current-password"></div>
+  <button class="btn" id="loginBtn" type="submit">登录</button>
+  <p class="hint">首次启动默认账户 admin / admin</p>
+</form>
+
+<!-- 改密码弹窗 -->
+<div id="pwdModal">
+  <form class="box" onsubmit="return false">
+    <h3>修改密码</h3>
+    <div class="row"><input id="oldPwd" type="password" placeholder="原密码" autocomplete="current-password"></div>
+    <div class="row"><input id="newPwd" type="password" placeholder="新密码（至少 4 位）" autocomplete="new-password"></div>
+    <div class="row"><input id="newPwd2" type="password" placeholder="确认新密码" autocomplete="new-password"></div>
+    <div class="actions">
+      <button class="btn sub" id="cancelPwd" type="button">取消</button>
+      <button class="btn" id="savePwd" type="submit">保存</button>
+    </div>
+  </form>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const api = async (m, url, body, isForm) => {
+  const r = await fetch(url, {
+    method: m,
+    credentials: 'same-origin',
+    headers: isForm ? undefined : { 'Content-Type': 'application/json' },
+    body: isForm ? body : (body ? JSON.stringify(body) : undefined),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(data.error || ('错误 ' + r.status)); throw new Error(data.error); }
+  return data;
+};
+const toast = (msg) => {
+  const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2500);
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// 选项卡
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + b.dataset.tab));
+  load();
+});
+
+let media = [], program = [];
+
+// ----- 媒体库 -----
+async function loadMedia() {
+  media = await api('GET', '/api/media');
+  $('#mediaList').innerHTML = media.map(m => {
+    const url = 'media/' + m.filename;
+    const thumb = m.kind === 'IMAGE'
+      ? `<img class="thumb" src="${url}" alt="" onclick="openPreview('${url}', 'IMAGE')">`
+      : `<span class="thumb vid" onclick="openPreview('${url}', 'VIDEO')">▶ 视频</span>`;
+    return `<tr>
+      <td>${thumb}</td><td title="${esc(m.orig_name)}">${esc(m.orig_name)}</td>
+      <td><span class="tag ${m.kind==='IMAGE'?'img':'vid'}">${m.kind==='IMAGE'?'图片':'视频'}</span></td>
+      <td>${fmtSize(m.size)}</td>
+      <td><button class="btn sub" onclick="openPreview('${url}', '${m.kind}')">预览</button>
+          <button class="btn warn" onclick="delMedia(${m.id})">删除</button></td></tr>`;
+  }).join('');
+  const opts = media.map(m => `<option value="${m.id}">[${m.kind==='IMAGE'?'图':'视'}] ${esc(m.orig_name)}</option>`).join('');
+  $('#progMedia').innerHTML = opts; $('#schMedia').innerHTML = opts;
+}
+window.openPreview = (url, kind) => {
+  const p = $('#preview');
+  p.innerHTML = `<span class="close-btn" onclick="closePreview()">× 关闭</span>` +
+    (kind === 'VIDEO'
+      ? `<video src="${url}" controls preload="metadata" style="max-width:92vw;max-height:88vh"></video>`
+      : `<img src="${url}" alt="">`);
+  p.classList.add('show');
+  p.onclick = (e) => { if (e.target === p) closePreview(); };
+};
+window.closePreview = () => {
+  const p = $('#preview'); p.classList.remove('show'); p.innerHTML = `<span class="close-btn" onclick="closePreview()">× 关闭</span>`;
+  p.onclick = null;
+};
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePreview(); });
+window.delMedia = async (id) => { if (confirm('删除该媒体？引用它的节目单会自动移除该项。')) { await api('DELETE', '/api/media/' + id); toast('已删除'); load(); } };
+const fmtSize = (n) => n > 1048576 ? (n/1048576).toFixed(1)+' MB' : Math.ceil(n/1024)+' KB';
+const fmtSpeed = (b) => b > 1048576 ? (b/1048576).toFixed(1)+' MB/s' : Math.ceil(b/1024)+' KB/s';
+let currentXhr = null, queueAbort = false, queueXhrs = [];
+const upBox = () => $('#uploadBox'), fill = () => $('#barFill'), state = () => $('#upState'), right = () => $('#upRight'), queues = () => $('#queues');
+function showUp() { upBox().classList.add('show'); }
+function hideUp() { upBox().classList.remove('show'); queues().innerHTML = ''; }
+function setPct(p) { fill().classList.remove('indeterminate'); fill().style.width = Math.max(0, Math.min(100, p)) + '%'; }
+
+function renderQueue(items) {
+  queues().innerHTML = items.map((it, i) =>
+    `<div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:2px 0">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${it.file.name}">${i+1}. ${it.file.name}</span>
+      <span class="tag" style="background:${it.tagBg||'#eef1f3'};color:${it.tagColor||'#1f2329'}">${it.label}</span>
+    </div>`).join('');
+}
+
+function uploadOne(file, idx, total, items) {
+  return new Promise((resolve) => {
+    const fd = new FormData(); fd.append('file', file);
+    const xhr = new XMLHttpRequest();
+    queueXhrs.push(xhr);
+    xhr.timeout = 120_000;
+    let lastLoaded = 0, lastT = Date.now();
+    renderQueue(items);
+    state().textContent = `[${idx+1}/${total}] 上传 ${file.name}`;
+    right().textContent = fmtSize(file.size);
+
+    xhr.upload.onprogress = (e) => {
+      if (queueAbort) { xhr.abort(); return; }
+      if (e.lengthComputable) {
+        const p = e.loaded / e.total * 100;
+        items[idx].pct = p;
+        setPct(p);
+        const now = Date.now();
+        const dt = (now - lastT) / 1000;
+        const speed = dt > 0 ? (e.loaded - lastLoaded) / dt : 0;
+        lastLoaded = e.loaded; lastT = now;
+        right().textContent = `${Math.round(p)}% · ${fmtSize(e.loaded)}/${fmtSize(e.total)} · ${fmtSpeed(speed)}`;
+        items[idx].label = `${Math.round(p)}%`;
+        renderQueue(items);
+      }
+    };
+    xhr.onload = () => {
+      const ok = xhr.status >= 200 && xhr.status < 300;
+      let msg = ok ? 'done' : ('err '+xhr.status);
+      let label = ok ? '✓' : msg;
+      let tagBg = ok ? '#e3f0e8' : '#ffe3e3';
+      let tagColor = ok ? '#16633c' : '#b71c1c';
+      let result = null;
+      if (ok) { try { result = JSON.parse(xhr.responseText); } catch {} }
+      items[idx].label = label; items[idx].tagBg = tagBg; items[idx].tagColor = tagColor;
+      renderQueue(items);
+      resolve({ ok, result });
+    };
+    xhr.onerror = () => { items[idx].label = '✗'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c'; renderQueue(items); resolve({ok:false}); };
+    xhr.ontimeout = () => { items[idx].label = '超时'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c'; renderQueue(items); resolve({ok:false}); };
+    xhr.onabort = () => { items[idx].label = '取消'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c'; renderQueue(items); resolve({ok:false}); };
+    xhr.open('POST', '/api/media');
+    xhr.withCredentials = true;
+    xhr.send(fd);
+  });
+}
+
+$('#uploadBtn').onclick = async () => {
+  const files = Array.from($('#file').files || []);
+  if (!files.length) return toast('请先选择文件');
+  queueAbort = false; queueXhrs = [];
+  $('#uploadCancel').style.display = '';
+  const items = files.map(f => ({ file: f, pct: 0, label: '等待' }));
+  showUp();
+  fill().classList.remove('indeterminate'); fill().style.width = '0%';
+  $('#uploadBtn').disabled = true;
+  renderQueue(items);
+
+  let ok = 0, dup = 0, fail = 0;
+  for (let i = 0; i < files.length; i++) {
+    if (queueAbort) break;
+    const r = await uploadOne(files[i], i, files.length, items);
+    if (r.ok && r.result?.duplicated) dup++;
+    else if (r.ok) ok++; else fail++;
+  }
+
+  $('#uploadCancel').style.display = 'none';
+  $('#uploadBtn').disabled = false;
+  state().textContent = queueAbort ? '已取消' : `完成：成功 ${ok}  ·  重复 ${dup}  ·  失败 ${fail}`;
+  state().classList.toggle('err', fail > 0);
+  right().textContent = '';
+  toast(queueAbort ? '已取消' : `上传完成（成功 ${ok}，重复 ${dup}，失败 ${fail}）`);
+  $('#file').value = '';
+  setTimeout(() => { if (!queueAbort) hideUp(); }, 2500);
+  if (ok > 0 || dup > 0) load();
+};
+$('#uploadCancel').onclick = () => { queueAbort = true; queueXhrs.forEach(x => { try { x.abort(); } catch {} }); };
+
+// ----- 默认节目单 -----
+async function loadProgram() {
+  program = await api('GET', '/api/program');
+  renderProgram();
+}
+function renderProgram() {
+  $('#progList').innerHTML = program.map((it, i) => `<tr>
+    <td>${i+1}</td><td title="${esc(it.name)}">${esc(it.name)}</td>
+    <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
+    <td><button class="btn sub" onclick="moveItem(${i},-1)">上移</button>
+        <button class="btn sub" onclick="moveItem(${i},1)">下移</button>
+        <button class="btn warn" onclick="rmItem(${i})">移除</button></td></tr>`).join('');
+}
+window.moveItem = (i, d) => { const j = i + d; if (j < 0 || j >= program.length) return;
+  [program[i], program[j]] = [program[j], program[i]]; renderProgram(); };
+window.rmItem = (i) => { program.splice(i, 1); renderProgram(); };
+$('#progAdd').onclick = () => {
+  const mediaId = +$('#progMedia').value; if (!mediaId) return toast('请先上传媒体');
+  const dur = +$('#progDur').value || null;
+  const m = media.find(x => x.id === mediaId);
+  program.push({ mediaId, durationSec: m.kind === 'IMAGE' ? dur : null, name: m.orig_name, kind: m.kind });
+  $('#progDur').value = ''; renderProgram();
+};
+$('#progSave').onclick = async () => {
+  await api('PUT', '/api/program', { items: program.map(it => ({ mediaId: it.mediaId, durationSec: it.durationSec })) });
+  toast('节目单已保存'); loadProgram();
+};
+
+// ----- 时段计划 -----
+const minuteOpts = () => {
+  let h = '';
+  for (let m = 0; m < 1440; m += 30)
+    h += `<option value="${m}">${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart(2,'0')}</option>`;
+  return h;
+};
+$('#schStart').innerHTML = minuteOpts(); $('#schEnd').innerHTML = minuteOpts();
+$('#schStart').value = 480; $('#schEnd').value = 1080;
+let schedules = [];
+async function loadSchedules() {
+  schedules = await api('GET', '/api/schedules');
+  $('#schList').innerHTML = schedules.map(s => {
+    const f = (m) => `${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+    return `<div class="card" style="background:#f8f9fa;margin-top:12px">
+      <div class="row">
+        <strong>${f(s.startMinute)} - ${f(s.endMinute)}${s.endMinute < s.startMinute ? '（跨午夜）' : ''}</strong>
+        <span class="tag">${s.enabled ? '启用' : '停用'}</span>
+        <span class="muted">${s.items.length} 项</span>
+        <span class="grow"></span>
+        <button class="btn sub" onclick="toggleSch('${s.id}', ${!s.enabled})">${s.enabled ? '停用' : '启用'}</button>
+        <button class="btn warn" onclick="delSch('${s.id}')">删除</button>
+      </div></div>`;
+  }).join('') || '<p class="muted" style="margin-top:12px">暂无时段</p>';
+}
+window.toggleSch = async (id, enabled) => {
+  const s = schedules.find(x => x.id === id);
+  await api('PUT', '/api/schedules/' + id, { startMinute: s.startMinute, endMinute: s.endMinute, enabled, items: s.items });
+  toast('已更新'); loadSchedules();
+};
+window.delSch = async (id) => { if (confirm('删除该时段？')) { await api('DELETE', '/api/schedules/' + id); toast('已删除'); loadSchedules(); } };
+$('#schAdd').onclick = async () => {
+  const mediaId = +$('#schMedia').value; if (!mediaId) return toast('请先上传媒体');
+  const m = media.find(x => x.id === mediaId);
+  try {
+    await api('POST', '/api/schedules', {
+      startMinute: +$('#schStart').value, endMinute: +$('#schEnd').value,
+      items: [{ mediaId, durationSec: m.kind === 'IMAGE' ? (+$('#schDur').value || null) : null }],
+    });
+    toast('时段已添加'); loadSchedules();
+  } catch {}
+};
+
+// ----- 发布 / 版本 -----
+async function loadVersions() {
+  const list = await api('GET', '/api/versions');
+  $('#curVer').textContent = list.length ? `当前版本 v${list[0].contentVersion}` : '尚未发布';
+  $('#verList').innerHTML = list.map(v => `<tr>
+    <td>v${v.contentVersion}</td><td>${v.createdAt}</td>
+    <td><button class="btn sub" onclick="rollback(${v.contentVersion})">回滚</button></td></tr>`).join('');
+}
+window.rollback = async (v) => {
+  if (!confirm(`回滚到 v${v} 的内容？（会生成一个新版本号）`)) return;
+  const r = await api('POST', '/api/rollback/' + v); toast(`已回滚，新版本 v${r.contentVersion}`); loadVersions();
+};
+$('#pubBtn').onclick = async () => {
+  try { const r = await api('POST', '/api/publish'); toast(`发布成功：v${r.contentVersion}`); loadVersions(); } catch {}
+};
+
+// ----- 终端配对 -----
+async function loadTerminals() {
+  const list = await api('GET', '/api/terminals');
+  $('#termList').innerHTML = list.map(t => `<tr>
+    <td>${esc(t.name)}</td><td><strong>${t.code || '-'}</strong></td>
+    <td><span class="tag">${t.status === 'paired' ? '已配对' : '待确认'}</span></td>
+    <td>${t.status === 'pending' ? `<button class="btn" onclick="confirmTerm(${t.id})">确认</button>` : ''}
+        <button class="btn warn" onclick="delTerm(${t.id})">删除</button></td></tr>`).join('');
+}
+$('#genCode').onclick = async () => {
+  const r = await api('POST', '/api/pairing-codes', { name: $('#termName').value });
+  toast(`配对码：${r.code}（请在电视上输入）`); $('#termName').value = ''; loadTerminals();
+};
+window.confirmTerm = async (id) => { await api('POST', `/api/terminals/${id}/confirm`); toast('已确认'); loadTerminals(); };
+window.delTerm = async (id) => { if (confirm('删除该终端？')) { await api('DELETE', '/api/terminals/' + id); toast('已删除'); loadTerminals(); } };
+
+function load() {
+  const tab = document.querySelector('nav button.on').dataset.tab;
+  if (tab === 'media') loadMedia();
+  else if (tab === 'program') loadProgram();
+  else if (tab === 'schedules') loadSchedules();
+  else if (tab === 'publish') loadVersions();
+  else if (tab === 'terminals') loadTerminals();
+}
+
+// ---------- 认证 ----------
+async function checkAuth() {
+  try {
+    const me = await fetch('/api/me').then(r => r.ok ? r.json() : null);
+    if (me && me.username) {
+      $('#whoLabel').textContent = me.username;
+      $('#userPanel').classList.remove('hidden');
+      $('#loginForm').classList.add('hidden');
+      return true;
+    }
+  } catch {}
+  showLogin(); return false;
+}
+function showLogin() {
+  document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+  document.querySelector('nav').classList.add('hidden');
+  $('#userPanel').classList.add('hidden');
+  $('#loginForm').classList.remove('hidden');
+}
+function showMain() {
+  document.querySelector('nav').classList.remove('hidden');
+  document.querySelectorAll('main > section').forEach(s => s.classList.remove('hidden'));
+  // 恢复媒体库为初始 tab
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === 'media'));
+}
+$('#loginBtn').onclick = async () => {
+  try {
+    await api('POST', '/api/login', { username: $('#loginUser').value, password: $('#loginPass').value });
+    $('#loginPass').value = '';
+    await checkAuth();
+    showMain();
+    load();
+  } catch {}
+};
+$('#loginPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#loginBtn').click(); });
+$('#logoutBtn').onclick = async () => {
+  await api('POST', '/api/logout');
+  showLogin();
+};
+$('#openPwd').onclick = () => { $('#pwdModal').classList.add('show'); };
+$('#cancelPwd').onclick = () => { $('#pwdModal').classList.remove('show'); ['oldPwd','newPwd','newPwd2'].forEach(id=>$('#'+id).value=''); };
+$('#pwdModal').onclick = (e) => { if (e.target.id === 'pwdModal') $('#cancelPwd').click(); };
+$('#savePwd').onclick = async () => {
+  const oldP = $('#oldPwd').value, n1 = $('#newPwd').value, n2 = $('#newPwd2').value;
+  if (!n1 || n1.length < 4) return toast('新密码至少 4 位');
+  if (n1 !== n2) return toast('两次输入不一致');
+  try { await api('PUT', '/api/password', { oldPassword: oldP, newPassword: n1 }); toast('密码已更新'); $('#cancelPwd').click(); } catch {}
+};
+
+checkAuth().then(ok => { if (ok) { showMain(); load(); } });
+</script>
+</body>
+</html>
