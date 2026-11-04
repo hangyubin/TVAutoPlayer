@@ -145,17 +145,6 @@
     <string name="usb_status_value">USB folder: %1$d media files</string>
     <string name="usb_status_empty">USB folder not found: put files in the TVAutoPlayer folder at the USB root.</string>
     <string name="no_media_in_usb">No media found in USB mode. Put images or videos into the TVAutoPlayer folder at the USB root; playback starts automatically after the drive is reinserted.</string>
-    <!-- Terminal pairing -->
-    <string name="terminal_pair_button">Pair device</string>
-    <string name="terminal_pair_dialog_title">Enter pairing code</string>
-    <string name="terminal_pair_code_hint">6-digit code generated on the admin Terminals page</string>
-    <string name="terminal_pair_code_invalid">The pairing code must be 6 digits</string>
-    <string name="terminal_pair_need_server_url">Set the server address before pairing.</string>
-    <string name="terminal_paired_status">Paired: %1$s</string>
-    <string name="terminal_not_paired">Not paired</string>
-    <string name="terminal_pair_success">Paired: %1$s</string>
-    <string name="terminal_pair_failed">Pairing failed</string>
-    <string name="terminal_pair_rejected">Pairing rejected: %1$s</string>
     <!-- Video progress overlay -->
     <string name="video_progress_format">%1$s / %2$s</string>
 </resources>

@@ -24,8 +24,6 @@ public final class PlaybackConfigStore {
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_REMOTE_VERSION = "remote_content_version";
     private static final String KEY_REMOTE_LAST_FETCH = "remote_last_fetch_ms";
-    private static final String KEY_TERMINAL_ID = "terminal_id";
-    private static final String KEY_TERMINAL_NAME = "terminal_name";
 
     private final SharedPreferences preferences;
 
@@ -145,24 +143,6 @@ public final class PlaybackConfigStore {
 
     public void setRemoteLastFetchMillis(long ts) {
         preferences.edit().putLong(KEY_REMOTE_LAST_FETCH, ts).apply();
-    }
-
-    public long terminalId() {
-        return preferences.getLong(KEY_TERMINAL_ID, 0L);
-    }
-
-    public void setTerminalId(long id) {
-        preferences.edit().putLong(KEY_TERMINAL_ID, id).apply();
-    }
-
-    public String terminalName() {
-        return preferences.getString(KEY_TERMINAL_NAME, "");
-    }
-
-    public void setTerminalName(String name) {
-        preferences.edit()
-                .putString(KEY_TERMINAL_NAME, name == null ? "" : name.trim())
-                .apply();
     }
 
     private List<PlaylistItem> loadPlaylist() {

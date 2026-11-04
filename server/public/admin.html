@@ -82,7 +82,6 @@
     <button data-tab="media" class="on">媒体库</button>
     <button data-tab="program">节目单</button>
     <button data-tab="schedules">时段</button>
-    <button data-tab="terminals">终端</button>
   </nav>
   <div id="userPanel" class="hidden">
     <span class="who" id="whoLabel"></span>
@@ -138,17 +137,6 @@
     <button class="btn" id="schAdd">添加时段</button>
   </div>
   <div id="schList"></div>
-</section>
-
-<section id="tab-terminals" class="card hidden">
-  <h2>终端配对</h2>
-  <div class="row">
-    <input id="termName" class="grow" placeholder="终端名称，如：大厅左屏">
-    <button class="btn" id="genCode">生成配对码</button>
-  </div>
-  <table style="margin-top:12px"><thead><tr>
-    <th>名称</th><th style="width:110px">配对码</th><th style="width:80px">状态</th><th style="width:130px">最后在线</th><th style="width:110px">操作</th>
-  </tr></thead><tbody id="termList"></tbody></table>
 </section>
 
 </main>
@@ -440,27 +428,11 @@ $('#schAdd').onclick = async () => {
   } catch {}
 };
 
-// ----- 终端配对 -----
-async function loadTerminals() {
-  const list = await api('GET', '/api/terminals');
-  $('#termList').innerHTML = list.map(t => `<tr>
-    <td>${esc(t.name)}</td><td><strong>${t.code || '-'}</strong></td>
-    <td><span class="tag">${t.status === 'paired' ? '已配对' : '待输入'}</span></td>
-    <td>${t.lastSeenAt ? `${esc(t.lastSeenAt)}<br><small>v${t.lastVersion ?? '-'}</small>` : '-'}</td>
-    <td><button class="btn warn" onclick="delTerm(${t.id})">删除</button></td></tr>`).join('');
-}
-$('#genCode').onclick = async () => {
-  const r = await api('POST', '/api/pairing-codes', { name: $('#termName').value });
-  toast(`配对码：${r.code}（请在电视上输入）`); $('#termName').value = ''; loadTerminals();
-};
-window.delTerm = async (id) => { if (confirm('删除该终端？')) { await api('DELETE', '/api/terminals/' + id); toast('已删除'); loadTerminals(); } };
-
 function load() {
   const tab = document.querySelector('nav button.on').dataset.tab;
   if (tab === 'media') loadMedia();
   else if (tab === 'program') loadProgram();
   else if (tab === 'schedules') loadSchedules();
-  else if (tab === 'terminals') loadTerminals();
 }
 
 // ---------- 认证 ----------

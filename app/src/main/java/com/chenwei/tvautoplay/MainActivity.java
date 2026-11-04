@@ -242,7 +242,7 @@ public final class MainActivity extends ComponentActivity {
             final int version;
             try {
                 RemoteManifestClient.Manifest manifest =
-                        new RemoteManifestClient(serverUrl, configStore.terminalId()).fetch();
+                        new RemoteManifestClient(serverUrl).fetch();
                 PlaybackConfiguration preferences = configStore.load();
                 config = RemoteContentBridge.toLocalConfig(
                         manifest,

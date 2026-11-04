@@ -60,25 +60,6 @@
             android:textColor="@color/text_secondary"
             android:textSize="16sp" />
 
-        <Button
-            android:id="@+id/terminal_pair_button"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/button_height"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/button_background"
-            android:text="@string/terminal_pair_button"
-            android:textColor="@color/text_primary"
-            android:textSize="@dimen/button_text_size" />
-
-        <TextView
-            android:id="@+id/terminal_pair_status_value"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="@string/terminal_not_paired"
-            android:textColor="@color/text_secondary"
-            android:textSize="16sp" />
-
         <TextView
             android:id="@+id/usb_status_value"
             android:layout_width="match_parent"

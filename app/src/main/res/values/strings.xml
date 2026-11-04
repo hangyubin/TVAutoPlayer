@@ -145,17 +145,6 @@
     <string name="usb_status_value">U 盘目录：%1$d 个媒体文件</string>
     <string name="usb_status_empty">未找到 U 盘目录：请把文件放到 U 盘根目录的 TVAutoPlayer 文件夹。</string>
     <string name="no_media_in_usb">U 盘模式没有找到媒体文件。请把图片或视频放入 U 盘根目录的 TVAutoPlayer 文件夹，重新插入 U 盘后会自动播放。</string>
-    <!-- Terminal pairing -->
-    <string name="terminal_pair_button">配对设备</string>
-    <string name="terminal_pair_dialog_title">输入配对码</string>
-    <string name="terminal_pair_code_hint">6 位数字配对码（在后台“终端”页面生成）</string>
-    <string name="terminal_pair_code_invalid">配对码须为 6 位数字</string>
-    <string name="terminal_pair_need_server_url">请先设置服务器地址再配对。</string>
-    <string name="terminal_paired_status">已配对：%1$s</string>
-    <string name="terminal_not_paired">未配对</string>
-    <string name="terminal_pair_success">配对成功：%1$s</string>
-    <string name="terminal_pair_failed">配对失败</string>
-    <string name="terminal_pair_rejected">配对被拒绝：%1$s</string>
     <!-- Video progress overlay -->
     <string name="video_progress_format">%1$s / %2$s</string>
 </resources>

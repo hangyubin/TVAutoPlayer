@@ -1,12 +1,9 @@
 package com.chenwei.tvautoplay;
 
 import android.app.AlertDialog;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.InputFilter;
-import android.text.InputType;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -33,9 +30,7 @@ public final class SettingsActivity extends ComponentActivity {
     private PlaybackConfigStore configStore;
     private Button playModeButton;
     private Button serverUrlButton;
-    private Button terminalPairButton;
     private TextView remoteStatus;
-    private TextView terminalStatus;
     private TextView usbStatus;
     private CheckBox autoStart;
     private Button soundButton;
@@ -56,9 +51,7 @@ public final class SettingsActivity extends ComponentActivity {
 
         playModeButton = findViewById(R.id.play_mode_button);
         serverUrlButton = findViewById(R.id.server_url_button);
-        terminalPairButton = findViewById(R.id.terminal_pair_button);
         remoteStatus = findViewById(R.id.remote_status_value);
-        terminalStatus = findViewById(R.id.terminal_pair_status_value);
         usbStatus = findViewById(R.id.usb_status_value);
         autoStart = findViewById(R.id.auto_start_checkbox);
         soundButton = findViewById(R.id.sound_button);
@@ -67,7 +60,6 @@ public final class SettingsActivity extends ComponentActivity {
 
         playModeButton.setOnClickListener(view -> togglePlayMode());
         serverUrlButton.setOnClickListener(view -> editServerUrl());
-        terminalPairButton.setOnClickListener(view -> startPairing());
         findViewById(R.id.back_to_player_button).setOnClickListener(view -> finish());
         autoStart.setOnClickListener(view ->
                 configStore.setAutoStartEnabled(autoStart.isChecked()));
@@ -160,10 +152,6 @@ public final class SettingsActivity extends ComponentActivity {
             remoteStatus.setText(R.string.remote_status_local);
         }
 
-        terminalStatus.setText(configStore.terminalId() > 0
-                ? getString(R.string.terminal_paired_status, pairedName())
-                : getString(R.string.terminal_not_paired));
-
         soundButton.setText(configuration.soundEnabled()
                 ? R.string.sound_on
                 : R.string.sound_off);
@@ -181,13 +169,6 @@ public final class SettingsActivity extends ComponentActivity {
             usbStatus.setVisibility(TextView.VISIBLE);
             refreshUsbStatus();
         }
-    }
-
-    private String pairedName() {
-        String name = configStore.terminalName();
-        return name.isEmpty()
-                ? getString(R.string.remote_mode_label_short)
-                : name;
     }
 
     private void refreshUsbStatus() {
@@ -242,82 +223,4 @@ public final class SettingsActivity extends ComponentActivity {
                 .show();
     }
 
-    private void startPairing() {
-        if (configStore.serverUrl().isEmpty()) {
-            Toast.makeText(this, R.string.terminal_pair_need_server_url, Toast.LENGTH_LONG).show();
-            return;
-        }
-        final EditText input = new EditText(this);
-        input.setHint(R.string.terminal_pair_code_hint);
-        input.setInputType(InputType.TYPE_CLASS_NUMBER);
-        input.setSingleLine(true);
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)});
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.terminal_pair_dialog_title)
-                .setView(input)
-                .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.save, (dialog, which) -> {
-                    String code = input.getText().toString().trim();
-                    if (!code.matches("\\d{6}")) {
-                        Toast.makeText(
-                                this,
-                                R.string.terminal_pair_code_invalid,
-                                Toast.LENGTH_LONG
-                        ).show();
-                        return;
-                    }
-                    submitPairing(code);
-                })
-                .show();
-    }
-
-    private void submitPairing(String code) {
-        final String serverUrl = configStore.serverUrl();
-        final String deviceName = Build.MODEL == null ? "TV" : Build.MODEL;
-        background.execute(() -> {
-            try {
-                RemoteManifestClient.PairResult result =
-                        RemoteManifestClient.claim(serverUrl, code, deviceName);
-                configStore.setTerminalId(result.terminalId);
-                configStore.setTerminalName(result.name);
-                mainHandler.post(() -> {
-                    if (destroyed) {
-                        return;
-                    }
-                    setResult(RESULT_OK);
-                    Toast.makeText(
-                            this,
-                            getString(R.string.terminal_pair_success, result.name),
-                            Toast.LENGTH_LONG
-                    ).show();
-                    refreshValues();
-                });
-            } catch (RemoteManifestClient.FetchException exception) {
-                final String message = translatePairingError(exception.getMessage());
-                mainHandler.post(() -> {
-                    if (destroyed) {
-                        return;
-                    }
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-                });
-            }
-        });
-    }
-
-    private String translatePairingError(String code) {
-        if (code == null) {
-            return getString(R.string.terminal_pair_failed);
-        }
-        if (code.startsWith("pair_rejected:")) {
-            String detail = code.substring("pair_rejected:".length()).trim();
-            return detail.isEmpty()
-                    ? getString(R.string.terminal_pair_failed)
-                    : getString(R.string.terminal_pair_rejected, detail);
-        }
-        if (code.startsWith("connect_error:")) {
-            return getString(R.string.remote_connect_error,
-                    code.substring("connect_error:".length()));
-        }
-        return getString(R.string.terminal_pair_failed);
-    }
 }

@@ -1,6 +1,6 @@
 // TVAutoPlayer 内容管理服务端（零依赖，Node >= 22.5）
 // 终端接口: GET /api/manifest, GET /media/<file>
-// 管理接口: /api/media /api/program /api/schedules /api/terminals
+// 管理接口: /api/media /api/program /api/schedules
 // 内容保存即生效：manifest 直接由当前数据生成，contentVersion 为内容哈希
 const http = require('http');
 const fs = require('fs');
@@ -146,12 +146,6 @@ const server = http.createServer(async (req, res) => {
       // 直接由当前媒体 / 节目单 / 时段生成，保存后立即对终端可见
       const manifest = buildManifest(db, 0);
       manifest.contentVersion = contentVersionOf(manifest);
-      // 已配对终端会带上 X-Terminal-Id；记录在线状态与拉取到的版本，后台可见
-      const tid = parseInt(req.headers['x-terminal-id'], 10);
-      if (Number.isInteger(tid) && tid > 0) {
-        db.prepare("UPDATE terminals SET last_seen_at = datetime('now'), last_version = ? WHERE id = ?")
-          .run(manifest.contentVersion, tid);
-      }
       return send(res, 200, manifest);
     }
     if (p.startsWith('/media/') && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -183,17 +177,6 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(status, headers);
       return fs.createReadStream(file, { start, end }).pipe(res);
     }
-    // 终端认领配对码（TV 端调用）
-    if (p === '/api/terminals/claim' && req.method === 'POST') {
-      const { code, name } = await jsonBody(req);
-      if (!/^\d{6}$/.test(code || '')) return bad(res, '配对码须为 6 位数字');
-      const t = db.prepare("SELECT * FROM terminals WHERE code = ? AND status = 'pending'").get(code);
-      if (!t) return bad(res, '配对码无效或已使用');
-      db.prepare("UPDATE terminals SET name = ?, code = NULL, status = 'paired' WHERE id = ?")
-        .run(String(name || 'TV 终端').slice(0, 50), t.id);
-      return ok(res, { paired: true, terminalId: t.id, name: String(name || t.name || 'TV 终端') });
-    }
-
     // 管理页面（始终可访问，未登录时 HTML 内会显示登录 UI）
     if ((p === '/' || p === '/admin') && req.method === 'GET') {
       return send(res, 200, fs.readFileSync(path.join(__dirname, 'public', 'admin.html')),
@@ -341,23 +324,6 @@ const server = http.createServer(async (req, res) => {
     if (m && req.method === 'PUT') return upsertSchedule(m[1]);
     if (m && req.method === 'DELETE') {
       db.prepare('DELETE FROM schedules WHERE id = ?').run(m[1]);
-      return ok(res);
-    }
-
-    // ----- 终端配对 -----
-    if (p === '/api/pairing-codes' && req.method === 'POST') {
-      const { name } = await jsonBody(req);
-      const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-      db.prepare("INSERT INTO terminals (name, code, status) VALUES (?,?,'pending')")
-        .run(String(name || '待配对').slice(0, 50), code);
-      return ok(res, { code });
-    }
-    if (p === '/api/terminals' && req.method === 'GET') {
-      return ok(res, db.prepare('SELECT id, name, code, status, created_at AS createdAt, last_seen_at AS lastSeenAt, last_version AS lastVersion FROM terminals ORDER BY id DESC').all());
-    }
-    m = /^\/api\/terminals\/(\d+)$/.exec(p);
-    if (m && req.method === 'DELETE') {
-      db.prepare('DELETE FROM terminals WHERE id = ?').run(m[1]);
       return ok(res);
     }
 

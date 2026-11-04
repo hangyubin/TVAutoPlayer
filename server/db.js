@@ -1,4 +1,4 @@
-// SQLite 数据层：媒体库、节目单、时段计划、终端配对、管理员账户
+// SQLite 数据层：媒体库、节目单、时段计划、管理员账户
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 
@@ -33,14 +33,6 @@ CREATE TABLE IF NOT EXISTS schedules (
   items_json   TEXT NOT NULL DEFAULT '[]'
 );
 
-CREATE TABLE IF NOT EXISTS terminals (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  name       TEXT NOT NULL,
-  code       TEXT UNIQUE,
-  status     TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paired')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 -- 管理员账户（单用户）
 CREATE TABLE IF NOT EXISTS admin_user (
   username    TEXT PRIMARY KEY,
@@ -51,14 +43,5 @@ CREATE TABLE IF NOT EXISTS admin_user (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
-
-// 终端在线状态（升级旧库时补齐列）
-const terminalColumns = db.prepare('PRAGMA table_info(terminals)').all().map(c => c.name);
-if (!terminalColumns.includes('last_seen_at')) {
-  db.exec('ALTER TABLE terminals ADD COLUMN last_seen_at TEXT');
-}
-if (!terminalColumns.includes('last_version')) {
-  db.exec('ALTER TABLE terminals ADD COLUMN last_version INTEGER');
-}
 
 module.exports = db;
