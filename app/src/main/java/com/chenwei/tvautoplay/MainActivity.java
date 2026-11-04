@@ -346,7 +346,8 @@ public final class MainActivity extends ComponentActivity {
         if (!activityStarted) {
             return;
         }
-// Remote mode: also refresh manifest        if (configStore.isRemoteModeEnabled()) {
+        // Remote mode: also refresh manifest
+        if (configStore.isRemoteModeEnabled()) {
             fetchAndApplyRemoteManifest(false);
             scheduleHandler.postDelayed(scheduleCheck, SCHEDULE_CHECK_INTERVAL_MS);
             return;
