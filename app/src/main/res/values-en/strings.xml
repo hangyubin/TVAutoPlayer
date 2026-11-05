@@ -149,6 +149,6 @@
     <string name="audio_track_none">No audio tracks in current video</string>
     <string name="audio_track_selected">Audio track %1$d / %2$d (press 1-%2$d to switch, 0 for default)</string>
     <string name="audio_track_selected_default">Audio track: default (press 1-9 to switch, 0 to reset)</string>
-    <string name="audio_track_out_of_range">Video has only %1$d audio track(s)</string>
+    <string name="audio_track_out_of_range">Track %1$d not found — video only has %2$d audio track(s)</string>
     <string name="audio_track_not_supported">Audio track %1$d is not supported</string>
 </resources>
