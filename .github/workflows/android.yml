@@ -2,6 +2,10 @@ name: Android CI
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
 
 permissions:
   contents: read
@@ -23,11 +27,11 @@ jobs:
 
       - name: Install Android SDK packages
         shell: pwsh
-        run: '& "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat" "platforms;android-36" "build-tools;36.0.0"'
+        run: '& "$env:ANDROID_HOME\cmdline-tools\latestin\sdkmanager.bat" "platforms;android-36" "build-tools;36.0.0"'
 
       - name: Test, lint and build
         shell: pwsh
-        run: .\scripts\build.ps1
+        run: '.\scripts\build.ps1'
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v6
