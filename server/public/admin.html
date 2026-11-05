@@ -81,6 +81,7 @@
   <nav>
     <button data-tab="media" class="on">媒体库</button>
     <button data-tab="program">节目单</button>
+    <button data-tab="live">直播源</button>
     <button data-tab="schedules">时段</button>
   </nav>
   <div id="userPanel" class="hidden">
@@ -135,6 +136,19 @@
   <table><thead><tr>
     <th style="width:60px">拖动</th><th>文件</th><th style="width:80px">时长</th><th style="width:80px">操作</th>
   </tr></thead><tbody id="progList"></tbody></table>
+</section>
+
+<section id="tab-live" class="card hidden">
+  <h2>直播源（HLS / m3u8）</h2>
+  <div class="row">
+    <input id="liveName" placeholder="名称，如 CCTV1" style="width:180px">
+    <input id="liveUrl" class="grow" placeholder="http(s)://.../index.m3u8">
+    <button class="btn" id="liveAdd">添加</button>
+  </div>
+  <p class="muted" style="margin:8px 0">添加后到「时段」页把直播源排进时段节目单；命中时段自动直播，时段结束自动切回节目单。停用的直播源不会下发。</p>
+  <table><thead><tr>
+    <th style="width:160px">名称</th><th>地址</th><th style="width:70px">状态</th><th style="width:120px">操作</th>
+  </tr></thead><tbody id="liveList"></tbody></table>
 </section>
 
 <section id="tab-schedules" class="card hidden">
@@ -202,7 +216,40 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   load();
 });
 
-let media = [], program = [];
+let media = [], program = [], lives = [];
+
+// ----- 直播源 -----
+async function loadLive() {
+  lives = await api('GET', '/api/live');
+  $('#liveList').innerHTML = lives.map(s => `<tr>
+    <td>${esc(s.name)}</td>
+    <td title="${esc(s.url)}" style="max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.url)}</td>
+    <td><span class="tag ${s.enabled?'img':''}">${s.enabled?'启用':'停用'}</span></td>
+    <td><button class="btn sub" onclick="toggleLive(${s.id},${s.enabled?0:1})">${s.enabled?'停用':'启用'}</button>
+        <button class="btn warn" onclick="delLive(${s.id})">删除</button></td></tr>`).join('')
+    || '<tr><td colspan="4" class="muted">暂无直播源，添加后到「时段」中编排</td></tr>';
+}
+$('#liveAdd').onclick = async () => {
+  const name = $('#liveName').value.trim(), url = $('#liveUrl').value.trim();
+  if (!name || !url) return toast('请填写名称和地址');
+  try {
+    await api('POST', '/api/live', { name, url });
+    $('#liveName').value = ''; $('#liveUrl').value = '';
+    toast('已添加'); loadLive();
+  } catch {}
+};
+window.toggleLive = async (id, enabled) => {
+  await api('PUT', '/api/live/' + id, { enabled: !!enabled });
+  toast(enabled ? '已启用' : '已停用'); loadLive();
+};
+window.delLive = async (id) => {
+  if (confirm('删除该直播源？引用它的时段会自动移除该项。')) { await api('DELETE', '/api/live/' + id); toast('已删除'); loadLive(); }
+};
+const liveNameOf = (id) => {
+  const s = lives.find(x => x.id === id);
+  return s ? `[直播] ${s.name}` : `[直播] #${id}（已删除）`;
+};
+const itemNameOf = (it) => it.liveId != null ? liveNameOf(it.liveId) : mediaNameOf(it.mediaId);
 
 // ----- 媒体库 -----
 async function loadMedia() {
@@ -219,17 +266,21 @@ async function loadMedia() {
       <td><button class="btn sub" onclick="openPreview('${url}', '${m.kind}')">预览</button>
           <button class="btn warn" onclick="delMedia(${m.id})">删除</button></td></tr>`;
   }).join('');
-  $('#schMedia').innerHTML = mediaOptionsHtml();
+  $('#schMedia').innerHTML = schedOptionsHtml();
 }
 const mediaOptionsHtml = () =>
   media.map(m => `<option value="${m.id}">[${m.kind==='IMAGE'?'图':'视'}] ${esc(m.orig_name)}</option>`).join('');
+// 时段下拉：媒体 + 直播源（live: 前缀区分）
+const schedOptionsHtml = () =>
+  mediaOptionsHtml() +
+  lives.map(s => `<option value="live:${s.id}">[直播] ${esc(s.name)}${s.enabled?'':'（停用）'}</option>`).join('');
 const mediaNameOf = (id) => {
   const m = media.find(x => x.id === id);
   return m ? m.orig_name : `#${id}（已删除）`;
 };
 const ensureMedia = async () => {
   media = await api('GET', '/api/media');
-  $('#schMedia').innerHTML = mediaOptionsHtml();
+  $('#schMedia').innerHTML = schedOptionsHtml();
   if (!$('#progPicker').classList.contains('hidden')) renderPicker();
 };
 window.openPreview = (url, kind) => {
@@ -448,6 +499,7 @@ const fmtMin = (m) => `${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart
 
 async function loadSchedules() {
   await ensureMedia();
+  await loadLive();
   schedules = await api('GET', '/api/schedules');
   schTimeEditing = -1;
   renderSchedules();
@@ -456,7 +508,7 @@ function renderSchedules() {
   $('#schList').innerHTML = schedules.map((s, si) => {
     const rows = s.items.map((it, i) => `<tr class="drag-row" draggable="true" data-sch="${si}" data-index="${i}">
       <td class="drag-handle">☰ ${i+1}</td>
-      <td title="${esc(mediaNameOf(it.mediaId))}">${esc(mediaNameOf(it.mediaId))}</td>
+      <td title="${esc(itemNameOf(it))}">${esc(itemNameOf(it))}</td>
       <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
       <td><button class="btn warn" onclick="schRmItem(${si},${i})">移除</button></td></tr>`).join('')
       || '<tr><td colspan="4" class="muted">暂无内容，请在下方添加</td></tr>';
@@ -482,7 +534,7 @@ function renderSchedules() {
         <th style="width:60px">拖动</th><th>文件</th><th style="width:80px">时长</th><th style="width:80px">操作</th>
       </tr></thead><tbody>${rows}</tbody></table>
       <div class="row" style="margin-top:8px">
-        <select class="grow" id="schItemMedia${si}">${mediaOptionsHtml()}</select>
+        <select class="grow" id="schItemMedia${si}">${schedOptionsHtml()}</select>
         <input type="number" id="schItemDur${si}" min="1" placeholder="秒">
         <button class="btn" onclick="schAddItem(${si})">添加</button>
       </div>
@@ -543,11 +595,17 @@ window.schSaveTime = (si) => {
   renderSchedules();
 };
 window.schAddItem = (si) => {
-  const mediaId = +$(`#schItemMedia${si}`).value;
-  if (!mediaId) return toast('请先上传媒体');
-  const m = media.find(x => x.id === mediaId);
-  const dur = +$(`#schItemDur${si}`).value || null;
-  schedules[si].items.push({ mediaId, durationSec: m.kind === 'IMAGE' ? dur : null });
+  const v = $(`#schItemMedia${si}`).value;
+  if (!v) return toast('请先上传媒体或添加直播源');
+  if (v.startsWith('live:')) {
+    schedules[si].items.push({ liveId: +v.slice(5) });
+  } else {
+    const mediaId = +v;
+    const m = media.find(x => x.id === mediaId);
+    if (!m) return toast('媒体不存在');
+    const dur = +$(`#schItemDur${si}`).value || null;
+    schedules[si].items.push({ mediaId, durationSec: m.kind === 'IMAGE' ? dur : null });
+  }
   renderSchedules();
 };
 window.schRmItem = (si, i) => { schedules[si].items.splice(i, 1); renderSchedules(); };
@@ -570,12 +628,20 @@ window.delSch = async (si) => {
   }
 };
 $('#schAdd').onclick = async () => {
-  const mediaId = +$('#schMedia').value; if (!mediaId) return toast('请先上传媒体');
-  const m = media.find(x => x.id === mediaId);
+  const v = $('#schMedia').value; if (!v) return toast('请先上传媒体或添加直播源');
+  let item;
+  if (v.startsWith('live:')) {
+    item = { liveId: +v.slice(5) };
+  } else {
+    const mediaId = +v;
+    const m = media.find(x => x.id === mediaId);
+    if (!m) return toast('媒体不存在');
+    item = { mediaId, durationSec: m.kind === 'IMAGE' ? (+$('#schDur').value || null) : null };
+  }
   try {
     await api('POST', '/api/schedules', {
       startMinute: +$('#schStart').value, endMinute: +$('#schEnd').value,
-      items: [{ mediaId, durationSec: m.kind === 'IMAGE' ? (+$('#schDur').value || null) : null }],
+      items: [item],
     });
     toast('时段已添加，可在卡片中继续添加内容'); loadSchedules();
   } catch {}
@@ -585,6 +651,7 @@ function load() {
   const tab = document.querySelector('nav button.on').dataset.tab;
   if (tab === 'media') loadMedia();
   else if (tab === 'program') loadProgram();
+  else if (tab === 'live') loadLive();
   else if (tab === 'schedules') loadSchedules();
 }
 

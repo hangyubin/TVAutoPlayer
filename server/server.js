@@ -482,12 +482,18 @@ const server = http.createServer(async (req, res) => {
       if (errs.length) return bad(res, errs.join('；'));
       if (!Array.isArray(items) || items.length === 0) return bad(res, '时段节目单不能为空');
       for (const it of items) {
-        if (!db.prepare('SELECT 1 FROM media WHERE id = ?').get(it.mediaId)) return bad(res, `媒体 ${it.mediaId} 不存在`);
+        if (it.liveId != null) {
+          if (!db.prepare('SELECT 1 FROM live_streams WHERE id = ?').get(it.liveId)) return bad(res, `直播源 ${it.liveId} 不存在`);
+        } else if (!db.prepare('SELECT 1 FROM media WHERE id = ?').get(it.mediaId)) {
+          return bad(res, `媒体 ${it.mediaId} 不存在`);
+        }
       }
-      const json = JSON.stringify(items.map(it => ({
-        mediaId: it.mediaId,
-        durationSec: Number.isInteger(it.durationSec) && it.durationSec > 0 ? it.durationSec : null,
-      })));
+      const json = JSON.stringify(items.map(it => it.liveId != null
+        ? { liveId: it.liveId }
+        : {
+            mediaId: it.mediaId,
+            durationSec: Number.isInteger(it.durationSec) && it.durationSec > 0 ? it.durationSec : null,
+          }));
       db.prepare(`INSERT INTO schedules (id, start_minute, end_minute, enabled, items_json)
                   VALUES (?,?,?,?,?)
                   ON CONFLICT(id) DO UPDATE SET start_minute=excluded.start_minute,
@@ -501,6 +507,45 @@ const server = http.createServer(async (req, res) => {
     if (m && req.method === 'PUT') return upsertSchedule(m[1]);
     if (m && req.method === 'DELETE') {
       db.prepare('DELETE FROM schedules WHERE id = ?').run(m[1]);
+      notifyContentChanged();
+      return ok(res);
+    }
+
+    // ----- 直播源 -----
+    if (p === '/api/live' && req.method === 'GET') {
+      return ok(res, db.prepare('SELECT * FROM live_streams ORDER BY id').all());
+    }
+    if (p === '/api/live' && req.method === 'POST') {
+      const { name, url: liveUrl } = await jsonBody(req);
+      if (!name || !String(name).trim()) return bad(res, '名称不能为空');
+      if (!/^https?:\/\/.+/i.test(String(liveUrl || ''))) return bad(res, '地址须为 http(s) 协议');
+      const info = db.prepare('INSERT INTO live_streams (name, url) VALUES (?,?)')
+        .run(String(name).trim().slice(0, 60), String(liveUrl).trim());
+      notifyContentChanged();
+      return ok(res, db.prepare('SELECT * FROM live_streams WHERE id = ?').get(info.lastInsertRowid));
+    }
+    m = /^\/api\/live\/(\d+)$/.exec(p);
+    if (m && req.method === 'PUT') {
+      const row = db.prepare('SELECT * FROM live_streams WHERE id = ?').get(m[1]);
+      if (!row) return send(res, 404, { error: '直播源不存在' });
+      const { name, url: liveUrl, enabled } = await jsonBody(req);
+      const newName = name != null ? String(name).trim().slice(0, 60) : row.name;
+      const newUrl = liveUrl != null ? String(liveUrl).trim() : row.url;
+      if (!newName) return bad(res, '名称不能为空');
+      if (!/^https?:\/\/.+/i.test(newUrl)) return bad(res, '地址须为 http(s) 协议');
+      db.prepare('UPDATE live_streams SET name = ?, url = ?, enabled = ? WHERE id = ?')
+        .run(newName, newUrl, enabled === undefined ? row.enabled : (enabled ? 1 : 0), row.id);
+      notifyContentChanged();
+      return ok(res);
+    }
+    if (m && req.method === 'DELETE') {
+      const row = db.prepare('SELECT * FROM live_streams WHERE id = ?').get(m[1]);
+      if (!row) return send(res, 404, { error: '直播源不存在' });
+      db.prepare('DELETE FROM live_streams WHERE id = ?').run(row.id);
+      for (const s of db.prepare('SELECT id, items_json FROM schedules').all()) {
+        const items = JSON.parse(s.items_json).filter(it => it.liveId !== row.id);
+        db.prepare('UPDATE schedules SET items_json = ? WHERE id = ?').run(JSON.stringify(items), s.id);
+      }
       notifyContentChanged();
       return ok(res);
     }

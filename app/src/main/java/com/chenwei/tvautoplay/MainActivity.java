@@ -564,7 +564,38 @@ public final class MainActivity extends ComponentActivity {
             player.play();
             return;
         }
+        if (fallbackToDefaultProgram()) {
+            return;
+        }
         showPlaybackError(error);
+    }
+
+    /**
+     * A scheduled slot whose items all failed (typical case: a dead live stream) falls
+     * back to the default program instead of parking on the error panel. The 30 s tick
+     * keeps comparing sourceIds, so the schedule is retried automatically and playback
+     * returns to the live stream as soon as it recovers.
+     */
+    private boolean fallbackToDefaultProgram() {
+        if (!configStore.isRemoteModeEnabled()
+                || ResolvedPlaylist.DEFAULT_SOURCE_ID.equals(activePlaylistSourceId)) {
+            return false;
+        }
+        PlaybackConfiguration config = lastRemoteConfig;
+        if (config == null || config.playlist().isEmpty()) {
+            return false;
+        }
+        PlaybackConfiguration fallback = new PlaybackConfiguration(
+                config.playlist(),
+                config.autoStartEnabled(),
+                config.soundEnabled(),
+                config.scaleMode(),
+                config.imageDuration(),
+                false,
+                Collections.emptyList()
+        );
+        renderConfiguration(fallback, ResolvedPlaylist.DEFAULT_SOURCE_ID);
+        return true;
     }
 
     private void openSettings() {

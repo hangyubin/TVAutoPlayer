@@ -33,6 +33,15 @@ CREATE TABLE IF NOT EXISTS schedules (
   items_json   TEXT NOT NULL DEFAULT '[]'
 );
 
+-- 直播源（HLS/m3u8），时段节目单可通过 {liveId} 引用
+CREATE TABLE IF NOT EXISTS live_streams (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  url        TEXT NOT NULL,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- 管理员账户（单用户）
 CREATE TABLE IF NOT EXISTS admin_user (
   username    TEXT PRIMARY KEY,

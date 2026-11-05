@@ -49,12 +49,18 @@ function mediaItem(mediaRow, durationSec) {
   return item;
 }
 
-// 由媒体 id 列表 [{mediaId, durationSec}] 生成节目单项；跳过已删除媒体
+// 由媒体 id 列表生成节目单项；条目为 {mediaId, durationSec} 或 {liveId}，跳过已删除/已停用引用
 function resolveItems(db, items) {
-  const stmt = db.prepare('SELECT * FROM media WHERE id = ?');
+  const mediaStmt = db.prepare('SELECT * FROM media WHERE id = ?');
+  const liveStmt = db.prepare('SELECT * FROM live_streams WHERE id = ? AND enabled = 1');
   const out = [];
   for (const it of items || []) {
-    const row = stmt.get(it.mediaId);
+    if (it.liveId != null) {
+      const s = liveStmt.get(it.liveId);
+      if (s) out.push({ url: s.url, kind: 'LIVE', name: s.name });
+      continue;
+    }
+    const row = mediaStmt.get(it.mediaId);
     if (row) out.push(mediaItem(row, it.durationSec));
   }
   return out;

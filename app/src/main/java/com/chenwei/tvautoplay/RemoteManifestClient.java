@@ -154,10 +154,11 @@ public final class RemoteManifestClient {
         String absolute = buildAbsoluteMediaUrl(baseUrl, rel);
         MediaKind kind = MediaKind.fromStoredValue(item.optString("kind", "VIDEO"));
         String sha = item.optString("sha256", "");
+        String name = item.optString("name", "");
         Integer durationSec = item.has("durationSec") && !item.isNull("durationSec")
                 ? item.getInt("durationSec")
                 : null;
-        return new ManifestItem(absolute, sha, kind, durationSec);
+        return new ManifestItem(absolute, sha, kind, durationSec, name);
     }
 
     private static String buildAbsoluteMediaUrl(String baseUrl, String relative) {
@@ -217,19 +218,26 @@ public final class RemoteManifestClient {
 
     /** One entry in defaultProgram or in a schedule's program. */
     public static final class ManifestItem {
-        /** Absolute http(s) URL to the media file on the server. */
+        /** Absolute http(s) URL to the media file on the server, or the live stream URL. */
         public final String url;
         /** sha256 of the file for integrity / cache keys. May be empty. */
         public final String sha256;
         public final MediaKind kind;
         /** Per-item image duration override (seconds); null = use default. */
         public final Integer durationSec;
+        /** Human-readable name; currently only set for LIVE entries. May be empty. */
+        public final String name;
 
         ManifestItem(String url, String sha256, MediaKind kind, Integer durationSec) {
+            this(url, sha256, kind, durationSec, "");
+        }
+
+        ManifestItem(String url, String sha256, MediaKind kind, Integer durationSec, String name) {
             this.url = url;
             this.sha256 = sha256;
             this.kind = kind;
             this.durationSec = durationSec;
+            this.name = name == null ? "" : name;
         }
     }
 

@@ -4,6 +4,7 @@ import android.net.Uri;
 
 import androidx.annotation.OptIn;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
 
 /** Converts persisted playlist entries into Media3 items without duplicating playback rules. */
@@ -20,6 +21,9 @@ public final class PlaybackMediaItemFactory {
                     ? item.durationSec() * 1_000L
                     : imageDuration.milliseconds();
             builder.setImageDurationMs(durationMs);
+        } else if (item.kind() == MediaKind.LIVE) {
+            // Live URLs often lack a .m3u8 suffix; force the HLS source explicitly.
+            builder.setMimeType(MimeTypes.APPLICATION_M3U8);
         }
         return builder.build();
     }
