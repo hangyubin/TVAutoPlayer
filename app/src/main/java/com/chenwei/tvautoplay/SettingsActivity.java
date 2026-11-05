@@ -20,6 +20,9 @@ import java.util.concurrent.Executors;
 
 /** D-pad-friendly settings screen for the two playback modes: CMS server and USB drive. */
 public final class SettingsActivity extends ComponentActivity {
+
+    public static final String EXTRA_CURRENT_AUDIO_TRACK_COUNT = "audio_track_count";
+
     private final ExecutorService background = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "SettingsBackground");
         thread.setDaemon(true);
@@ -236,19 +239,20 @@ public final class SettingsActivity extends ComponentActivity {
 
     private void pickAudioTrack() {
         int saved = configStore.preferredAudioTrackIndex();
-        int maxTrack = 9;
-        String[] labels = new String[maxTrack + 1];
+        int trackCount = getIntent().getIntExtra(EXTRA_CURRENT_AUDIO_TRACK_COUNT, 0);
+        // 最多列出 9 条（合理上限）；没在播视频时只显示"跟随默认"
+        int cap = Math.min(trackCount, 9);
+        String[] labels = new String[cap + 1];
         labels[0] = getString(R.string.audio_track_option_default);
-        int checkedIndex = 0;
-        for (int i = 0; i < maxTrack; i++) {
+        int checkedIndex = (saved < 0) ? 0 : Math.min(saved + 1, cap);
+        for (int i = 0; i < cap; i++) {
             labels[i + 1] = getString(R.string.audio_track_option_n, i + 1);
             if (saved == i) checkedIndex = i + 1;
         }
         new AlertDialog.Builder(this)
                 .setTitle(R.string.audio_track_dialog_title)
                 .setSingleChoiceItems(labels, checkedIndex, (dialog, which) -> {
-                    int index = which - 1; // -1 = default, 0..8 = track 1..9
-                    configStore.setPreferredAudioTrackIndex(index);
+                    configStore.setPreferredAudioTrackIndex(which - 1); // -1 = default, 0..N = track 1..N
                     setResult(RESULT_OK);
                     refreshValues();
                     dialog.dismiss();

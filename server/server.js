@@ -232,7 +232,8 @@ function isLegacyMkv(tmp, start) {
   finally { if (fd !== null) fs.closeSync(fd); }
 }
 
-// 无损重封装：视频流 + 第一条音频流 -c copy，剥离字幕轨，容器重写为现代格式。
+// 无损重封装：首条视频流 + 全部音频流 -c copy，剥离字幕轨，容器重写为现代格式。
+// 注意必须映射 0:a 而不是 0:a:0，否则多音轨视频的第二条及之后音轨会被丢弃。
 // 成功返回新的上传描述（up.tmp 指向重封装产物）；失败返回 error 文案。
 async function remuxMkv(up) {
   const src = path.join(MEDIA_DIR, `.remux-src-${crypto.randomUUID()}.mkv`);
@@ -242,7 +243,7 @@ async function remuxMkv(up) {
     // spawnSync 会短暂阻塞事件循环（数百 MB 约数秒），终端轮询超时后自动重试，可接受
     const r = spawnSync('ffmpeg', [
       '-v', 'error', '-y', '-i', src,
-      '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-sn', dst,
+      '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', '-sn', dst,
     ], { timeout: 300000 });
     if (r.status !== 0 || !fs.existsSync(dst)) throw new Error(r.stderr ? String(r.stderr).slice(0, 200) : 'ffmpeg 失败');
     const size = fs.statSync(dst).size;

@@ -517,7 +517,10 @@ public final class MainActivity extends ComponentActivity {
             return;
         }
         settingsOpen = true;
-        settingsLauncher.launch(new Intent(this, SettingsActivity.class));
+        Intent intent = new Intent(this, SettingsActivity.class);
+        intent.putExtra(SettingsActivity.EXTRA_CURRENT_AUDIO_TRACK_COUNT,
+                audioTrackEntries().size());
+        settingsLauncher.launch(intent);
     }
 
     private void releasePlayer() {
