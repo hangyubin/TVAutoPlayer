@@ -240,7 +240,7 @@ public final class SettingsActivity extends ComponentActivity {
     private void pickAudioTrack() {
         int saved = configStore.preferredAudioTrackIndex();
         int trackCount = getIntent().getIntExtra(EXTRA_CURRENT_AUDIO_TRACK_COUNT, 0);
-        // 最多列出 9 条（合理上限）；没在播视频时只显示"跟随默认"
+        // Cap at 9; if no video is playing, the dialog will only show "follow default".
         int cap = Math.min(trackCount, 9);
         String[] labels = new String[cap + 1];
         labels[0] = getString(R.string.audio_track_option_default);
