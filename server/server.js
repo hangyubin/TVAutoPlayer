@@ -109,6 +109,16 @@ const contentVersionOf = (manifest) => {
   return value === 0 ? 1 : value;
 };
 
+// ---------- 长轮询通知 ----------
+// 后台保存后立即唤醒挂起的 /api/watch 请求，终端无需等待固定轮询周期
+const WATCH_HOLD_MS = 25000;
+const contentWatchers = new Set();
+const notifyContentChanged = () => {
+  const pending = [...contentWatchers];
+  contentWatchers.clear();
+  pending.forEach((wake) => { try { wake(); } catch { /* 忽略单次唤醒异常 */ } });
+};
+
 const jsonBody = async (req) => {
   const buf = await readBody(req);
   try { return JSON.parse(buf.toString('utf8') || '{}'); }
@@ -269,6 +279,31 @@ const server = http.createServer(async (req, res) => {
       manifest.contentVersion = contentVersionOf(manifest);
       return send(res, 200, manifest);
     }
+    if (p === '/api/watch' && req.method === 'GET') {
+      // 长轮询：内容一变立即返回；无变化时最多挂起 WATCH_HOLD_MS 后返回当前版本
+      const since = Number(url.searchParams.get('version') || '0');
+      const currentVersion = () => contentVersionOf(buildManifest(db, 0));
+      const respond = () => {
+        if (res.writableEnded) return;
+        let v = since;
+        try { v = currentVersion(); } catch { /* 保留 since */ }
+        send(res, 200, { contentVersion: v });
+      };
+      if (currentVersion() !== since) return respond();
+      let timer = null;
+      const finish = () => {
+        contentWatchers.delete(finish);
+        if (timer) { clearTimeout(timer); timer = null; }
+        respond();
+      };
+      contentWatchers.add(finish);
+      timer = setTimeout(finish, WATCH_HOLD_MS);
+      req.on('close', () => {
+        contentWatchers.delete(finish);
+        if (timer) { clearTimeout(timer); timer = null; }
+      });
+      return;
+    }
     if (p.startsWith('/media/') && (req.method === 'GET' || req.method === 'HEAD')) {
       const name = path.basename(p.slice(7));
       const file = path.join(MEDIA_DIR, name);
@@ -387,6 +422,7 @@ const server = http.createServer(async (req, res) => {
       const info = db.prepare(
         'INSERT INTO media (filename, orig_name, sha256, kind, size) VALUES (?,?,?,?,?)'
       ).run(storeName, up.filename.slice(0, 120), sha256, kind, up.size);
+      notifyContentChanged();
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
     let m = /^\/api\/media\/(\d+)$/.exec(p);
@@ -399,6 +435,7 @@ const server = http.createServer(async (req, res) => {
         db.prepare('UPDATE schedules SET items_json = ? WHERE id = ?').run(JSON.stringify(items), s.id);
       }
       fs.rmSync(path.join(MEDIA_DIR, row.filename), { force: true });
+      notifyContentChanged();
       return ok(res);
     }
 
@@ -423,6 +460,7 @@ const server = http.createServer(async (req, res) => {
         });
         db.exec('COMMIT');
       } catch (e) { db.exec('ROLLBACK'); throw e; }
+      notifyContentChanged();
       return ok(res);
     }
 
@@ -455,6 +493,7 @@ const server = http.createServer(async (req, res) => {
                   ON CONFLICT(id) DO UPDATE SET start_minute=excluded.start_minute,
                     end_minute=excluded.end_minute, enabled=excluded.enabled, items_json=excluded.items_json`)
         .run(id, startMinute, endMinute, enabled === false ? 0 : 1, json);
+      notifyContentChanged();
       return ok(res, { id });
     };
     if (p === '/api/schedules' && req.method === 'POST') return upsertSchedule(newScheduleId());
@@ -462,6 +501,7 @@ const server = http.createServer(async (req, res) => {
     if (m && req.method === 'PUT') return upsertSchedule(m[1]);
     if (m && req.method === 'DELETE') {
       db.prepare('DELETE FROM schedules WHERE id = ?').run(m[1]);
+      notifyContentChanged();
       return ok(res);
     }
 

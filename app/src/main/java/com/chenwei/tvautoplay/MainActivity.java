@@ -41,11 +41,20 @@ import java.util.concurrent.Executors;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends ComponentActivity {
     private static final long SCHEDULE_CHECK_INTERVAL_MS = 30_000L;
+    /** Retry delay when the long-poll request cannot reach the server. */
+    private static final long WATCH_RETRY_DELAY_MS = 5_000L;
+    /** Give the manifest fetch time to store the new version before re-arming the watch. */
+    private static final long WATCH_SETTLE_MS = 1_500L;
 
     private final Handler scheduleHandler = new Handler(Looper.getMainLooper());
     private final Runnable scheduleCheck = this::checkForScheduleTransition;
     private final ExecutorService remoteFetcher = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "RemoteManifest");
+        t.setDaemon(true);
+        return t;
+    });
+    private final ExecutorService remoteWatcher = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "RemoteWatch");
         t.setDaemon(true);
         return t;
     });
@@ -75,6 +84,7 @@ public final class MainActivity extends ComponentActivity {
     /** Monotonic version of the config last rendered; remote version is pushed here too. */
     private int appliedRemoteVersion;
     private boolean remoteFetchInFlight;
+    private boolean remoteWatchInFlight;
     /** Last remote configuration received; used for 30 s schedule-boundary checks. */
     private PlaybackConfiguration lastRemoteConfig;
     private List<PlaylistItem> currentPlayable = new ArrayList<>();
@@ -124,6 +134,7 @@ public final class MainActivity extends ComponentActivity {
         super.onStart();
         activityStarted = true;
         startConfiguredPlayback();
+        startRemoteWatch();
         scheduleHandler.removeCallbacks(scheduleCheck);
         scheduleHandler.postDelayed(scheduleCheck, SCHEDULE_CHECK_INTERVAL_MS);
     }
@@ -225,6 +236,47 @@ public final class MainActivity extends ComponentActivity {
         return Integer.toHexString(builder.toString().hashCode());
     }
 
+    /**
+     * Long-poll the server so admin edits take effect immediately instead of waiting
+     * for the next fixed tick. The request parks on the server until the content
+     * hash changes (or the hold window expires).
+     */
+    private void startRemoteWatch() {
+        if (remoteWatchInFlight || !activityStarted || !configStore.isRemoteModeEnabled()) {
+            return;
+        }
+        final String serverUrl = configStore.serverUrl();
+        if (serverUrl.isEmpty()) {
+            return;
+        }
+        remoteWatchInFlight = true;
+        final int since = configStore.remoteContentVersion();
+        remoteWatcher.execute(() -> {
+            long observed;
+            try {
+                observed = new RemoteManifestClient(serverUrl).watch(since);
+            } catch (RemoteManifestClient.FetchException e) {
+                observed = -1;
+            }
+            final long result = observed;
+            mainHandler.post(() -> {
+                remoteWatchInFlight = false;
+                if (!activityStarted || !configStore.isRemoteModeEnabled()) {
+                    return;
+                }
+                if (result < 0) {
+                    // Server unreachable: retry later without disturbing playback.
+                    scheduleHandler.postDelayed(this::startRemoteWatch, WATCH_RETRY_DELAY_MS);
+                } else if (result != since) {
+                    fetchAndApplyRemoteManifest(false);
+                    scheduleHandler.postDelayed(this::startRemoteWatch, WATCH_SETTLE_MS);
+                } else {
+                    startRemoteWatch();
+                }
+            });
+        });
+    }
+
     /** Non-blocking; runs on background thread, renders on main. */
     private void fetchAndApplyRemoteManifest(boolean force) {
         if (remoteFetchInFlight) return;
@@ -273,7 +325,9 @@ public final class MainActivity extends ComponentActivity {
                     return;
                 }
                 appliedRemoteVersion = version;
-                renderConfiguration(config, "remote:" + version);
+                // Tag with the resolved source id so the 30 s schedule-boundary tick
+                // compares like for like instead of restarting playback every tick.
+                renderConfiguration(config, null);
             });
         });
     }
@@ -437,7 +491,8 @@ public final class MainActivity extends ComponentActivity {
                     renderConfiguration(remoteConfiguration, effective.sourceId());
                 }
             }
-            fetchAndApplyRemoteManifest(false);
+            // Content changes arrive through the long-poll watch, not this tick.
+            startRemoteWatch();
             scheduleHandler.postDelayed(scheduleCheck, SCHEDULE_CHECK_INTERVAL_MS);
             return;
         }
@@ -637,6 +692,7 @@ public final class MainActivity extends ComponentActivity {
         super.onDestroy();
         scheduleHandler.removeCallbacks(scheduleCheck);
         remoteFetcher.shutdownNow();
+        remoteWatcher.shutdownNow();
         usbScanner.shutdownNow();
         releasePlayer();
     }

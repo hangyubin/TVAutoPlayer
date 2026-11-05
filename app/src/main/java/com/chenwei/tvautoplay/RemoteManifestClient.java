@@ -33,6 +33,8 @@ public final class RemoteManifestClient {
 
     private static final int CONNECT_TIMEOUT_MS = 8_000;
     private static final int READ_TIMEOUT_MS = 15_000;
+    /** The server holds the watch request up to 25 s, so allow a little more than that. */
+    private static final int WATCH_READ_TIMEOUT_MS = 35_000;
 
     private final String baseUrl;
 
@@ -63,6 +65,35 @@ public final class RemoteManifestClient {
             }
             String body = readAll(conn);
             return parse(body);
+        } catch (IOException ioe) {
+            throw new FetchException("connect_error:" + baseUrl);
+        } catch (JSONException je) {
+            throw new FetchException("parse_error");
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /**
+     * Long-poll the server for a content change.
+     * Returns as soon as the server-side contentVersion differs from {@code sinceVersion},
+     * or after the server's hold window expires. Returns {@code sinceVersion} when unchanged.
+     */
+    public long watch(long sinceVersion) throws FetchException {
+        String endpoint = baseUrl + "/api/watch?version=" + sinceVersion;
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(endpoint).openConnection();
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(WATCH_READ_TIMEOUT_MS);
+            conn.setRequestMethod("GET");
+            conn.setInstanceFollowRedirects(true);
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new FetchException("server_http_error:" + code);
+            }
+            JSONObject root = new JSONObject(readAll(conn));
+            return root.optLong("contentVersion", sinceVersion);
         } catch (IOException ioe) {
             throw new FetchException("connect_error:" + baseUrl);
         } catch (JSONException je) {
