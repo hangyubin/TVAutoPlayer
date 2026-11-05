@@ -51,8 +51,8 @@ public final class PlaybackConfiguration {
             boolean scheduleEnabled,
             List<ScheduledPlaylist> scheduledPlaylists
     ) {
-        // 不去重：远程节目单允许同一媒体按顺序出现多次（如 A-B-A 轮播）；
-        // 本地选片的去重由 PlaylistEditor 在选取/解码入口负责
+        // No dedup: remote programs may legitimately repeat the same media (e.g. A-B-A loops);
+        // local USB selection dedup still happens in PlaylistEditor at its entry points.
         this.playlist = Collections.unmodifiableList(
                 new ArrayList<>(Objects.requireNonNull(playlist, "playlist")));
         this.autoStartEnabled = autoStartEnabled;

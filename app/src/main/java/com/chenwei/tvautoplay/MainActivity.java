@@ -149,7 +149,7 @@ public final class MainActivity extends ComponentActivity {
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_0) {
-            // 0 = 跟随默认音轨
+            // 0 = reset to default audio track
             resetAudioTrackToDefault();
             return true;
         }
@@ -383,7 +383,7 @@ public final class MainActivity extends ComponentActivity {
                 if (playbackState == Player.STATE_READY) {
                     consecutivePlaybackFailures = 0;
                     errorPanel.setVisibility(View.GONE);
-                    // 每次新条目就绪后应用用户上次选择的音轨（自动处理跨集、跨源切换）
+                    // Apply the user's previously chosen audio track whenever a new MediaItem is ready.
                     applySavedAudioTrackOverride();
                 }
             }
@@ -530,7 +530,7 @@ public final class MainActivity extends ComponentActivity {
         consecutivePlaybackFailures = 0;
     }
 
-    // ---------- 音轨切换（电视遥控器数字键 1-9 选音轨，0 回默认） ----------
+    // ---------- Audio track switching (remote 1-9 pick, 0 for default) ----------
 
     private void selectAudioTrack(int index) {
         if (trackSelector == null || player == null) return;
@@ -567,14 +567,14 @@ public final class MainActivity extends ComponentActivity {
                 Toast.LENGTH_SHORT).show();
     }
 
-    /** 新 MediaItem 就绪后自动应用上次用户选择的音轨 index；用户没选过则保持默认。 */
+    /** Applies the previously chosen audio track whenever a new MediaItem is ready. No-op when not set. */
     private void applySavedAudioTrackOverride() {
         if (trackSelector == null || player == null) return;
         int saved = configStore.preferredAudioTrackIndex();
         if (saved < 0) return;
         Tracks.Group group = firstAudioTrackGroup();
         if (group == null || saved >= group.length || !group.isTrackSupported(saved)) return;
-        // 已生效则不重复写入（避免 onTracksChanged 风暴）
+        // Already applied -> skip to avoid unnecessary override churn.
         if (group.isTrackSelected(saved)) return;
         trackSelector.setParameters(trackSelector.buildUponParameters()
                 .addOverride(new DefaultTrackSelector.SelectionOverride(

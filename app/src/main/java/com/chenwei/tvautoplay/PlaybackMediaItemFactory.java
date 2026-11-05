@@ -15,7 +15,7 @@ public final class PlaybackMediaItemFactory {
     public static MediaItem create(PlaylistItem item, ImageDuration imageDuration) {
         MediaItem.Builder builder = new MediaItem.Builder().setUri(Uri.parse(item.uri()));
         if (item.kind() == MediaKind.IMAGE) {
-            // 服务端节目单可为每张图片单独设置秒数；未设置时跟随设备全局时长
+            // Per-image seconds from the server program; if unset, fall back to the device default.
             long durationMs = item.durationSec() != null
                     ? item.durationSec() * 1_000L
                     : imageDuration.milliseconds();

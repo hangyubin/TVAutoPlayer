@@ -25,7 +25,7 @@ public final class PlaybackConfigStore {
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_REMOTE_VERSION = "remote_content_version";
     private static final String KEY_REMOTE_LAST_FETCH = "remote_last_fetch_ms";
-    /** 上次用户选中的音轨序号（0-based，-1 = 跟随默认）。 */
+    /** Previously chosen audio track (0-based), or -1 = follow the player default. */
     private static final String KEY_AUDIO_TRACK_INDEX = "audio_track_index";
 
     private final SharedPreferences preferences;
@@ -157,7 +157,7 @@ public final class PlaybackConfigStore {
         preferences.edit().putLong(KEY_REMOTE_LAST_FETCH, ts).apply();
     }
 
-    /** -1 表示让播放器自动选择默认音轨；否则为音轨组内的 0-based 序号。 */
+    /** -1 means "let player auto-pick default"; otherwise 0-based index within the audio track group. */
     public int preferredAudioTrackIndex() {
         return preferences.getInt(KEY_AUDIO_TRACK_INDEX, -1);
     }
