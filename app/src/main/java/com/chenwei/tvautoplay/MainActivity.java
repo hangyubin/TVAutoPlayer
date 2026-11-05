@@ -11,8 +11,6 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.Button;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -26,15 +24,16 @@ import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -63,6 +62,7 @@ public final class MainActivity extends ComponentActivity {
     private TextView errorMessage;
     private PlaybackConfigStore configStore;
     private ExoPlayer player;
+    private DefaultTrackSelector trackSelector;
     private boolean settingsOpen;
     private boolean selectionPromptAttempted;
     private boolean permissionRequested;
@@ -78,20 +78,7 @@ public final class MainActivity extends ComponentActivity {
     private boolean remoteFetchInFlight;
     /** Last remote configuration received; used for 30 s schedule-boundary checks. */
     private PlaybackConfiguration lastRemoteConfig;
-    private LinearLayout videoProgressPanel;
-    private ProgressBar videoProgressBar;
-    private TextView videoTimeText;
     private List<PlaylistItem> currentPlayable = new ArrayList<>();
-    private static final long VIDEO_PROGRESS_INTERVAL_MS = 500;
-    private final Runnable progressTicker = new Runnable() {
-        @Override
-        public void run() {
-            updateVideoProgress();
-            if (player != null) {
-                mainHandler.postDelayed(this, VIDEO_PROGRESS_INTERVAL_MS);
-            }
-        }
-    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -123,9 +110,6 @@ public final class MainActivity extends ComponentActivity {
         errorPanel = findViewById(R.id.error_panel);
         emptyMessage = findViewById(R.id.empty_message);
         errorMessage = findViewById(R.id.error_message);
-        videoProgressPanel = findViewById(R.id.video_progress_panel);
-        videoProgressBar = findViewById(R.id.video_progress_bar);
-        videoTimeText = findViewById(R.id.video_time_text);
 
         Button openSettings = findViewById(R.id.open_settings_button);
         Button retry = findViewById(R.id.retry_button);
@@ -157,6 +141,16 @@ public final class MainActivity extends ComponentActivity {
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS) {
             openSettings();
+            return true;
+        }
+        if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
+            int index = keyCode - KeyEvent.KEYCODE_1;
+            selectAudioTrack(index);
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_0) {
+            // 0 = 跟随默认音轨
+            resetAudioTrackToDefault();
             return true;
         }
         return super.onKeyDown(keyCode, event);
@@ -365,7 +359,9 @@ public final class MainActivity extends ComponentActivity {
         releasePlayer();
         consecutivePlaybackFailures = 0;
         activePlaylistSize = playable.size();
+        trackSelector = new DefaultTrackSelector(this);
         player = new ExoPlayer.Builder(this)
+                .setTrackSelector(trackSelector)
                 .setAudioAttributes(
                         new AudioAttributes.Builder()
                                 .setUsage(C.USAGE_MEDIA)
@@ -387,6 +383,8 @@ public final class MainActivity extends ComponentActivity {
                 if (playbackState == Player.STATE_READY) {
                     consecutivePlaybackFailures = 0;
                     errorPanel.setVisibility(View.GONE);
+                    // 每次新条目就绪后应用用户上次选择的音轨（自动处理跨集、跨源切换）
+                    applySavedAudioTrackOverride();
                 }
             }
         });
@@ -406,8 +404,6 @@ public final class MainActivity extends ComponentActivity {
         player.prepare();
         player.play();
         currentPlayable = playable;
-        mainHandler.removeCallbacks(progressTicker);
-        mainHandler.post(progressTicker);
 
         if (!configStore.isSettingsHintShown()) {
             Toast.makeText(this, R.string.settings_key_hint, Toast.LENGTH_LONG).show();
@@ -523,11 +519,8 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void releasePlayer() {
-        mainHandler.removeCallbacks(progressTicker);
-        if (videoProgressPanel != null) {
-            videoProgressPanel.setVisibility(View.GONE);
-        }
         currentPlayable = new ArrayList<>();
+        trackSelector = null;
         if (player != null) {
             playerView.setPlayer(null);
             player.release();
@@ -537,43 +530,65 @@ public final class MainActivity extends ComponentActivity {
         consecutivePlaybackFailures = 0;
     }
 
-    /** Shows elapsed time and progress only while a video item is playing. */
-    private void updateVideoProgress() {
-        if (player == null || videoProgressPanel == null) {
+    // ---------- 音轨切换（电视遥控器数字键 1-9 选音轨，0 回默认） ----------
+
+    private void selectAudioTrack(int index) {
+        if (trackSelector == null || player == null) return;
+        Tracks.Group group = firstAudioTrackGroup();
+        if (group == null) {
+            Toast.makeText(this, R.string.audio_track_none, Toast.LENGTH_SHORT).show();
             return;
         }
-        int index = player.getCurrentMediaItemIndex();
-        boolean isVideo = index >= 0
-                && index < currentPlayable.size()
-                && currentPlayable.get(index).kind() == MediaKind.VIDEO;
-        if (!isVideo) {
-            videoProgressPanel.setVisibility(View.GONE);
+        if (index >= group.length) {
+            Toast.makeText(this, getString(R.string.audio_track_out_of_range,
+                    index + 1, group.length), Toast.LENGTH_SHORT).show();
             return;
         }
-        long duration = player.getDuration();
-        long position = Math.max(0L, player.getCurrentPosition());
-        videoProgressPanel.setVisibility(View.VISIBLE);
-        if (duration > 0) {
-            videoProgressBar.setProgress(
-                    (int) Math.min(1000L, position * 1000L / duration));
-            videoTimeText.setText(getString(
-                    R.string.video_progress_format,
-                    formatClock(position),
-                    formatClock(duration)));
-        } else {
-            videoProgressBar.setProgress(0);
-            videoTimeText.setText(formatClock(position));
+        if (!group.isTrackSupported(index)) {
+            Toast.makeText(this, getString(R.string.audio_track_not_supported,
+                    index + 1), Toast.LENGTH_SHORT).show();
+            return;
         }
+        trackSelector.setParameters(trackSelector.buildUponParameters()
+                .addOverride(new DefaultTrackSelector.SelectionOverride(
+                        C.TRACK_TYPE_AUDIO, 0, index))
+                .build());
+        configStore.setPreferredAudioTrackIndex(index);
+        Toast.makeText(this, getString(R.string.audio_track_selected,
+                index + 1, group.length), Toast.LENGTH_SHORT).show();
     }
 
-    private static String formatClock(long millis) {
-        long totalSeconds = Math.max(0L, millis) / 1000L;
-        long hours = totalSeconds / 3600L;
-        long minutes = (totalSeconds % 3600L) / 60L;
-        long seconds = totalSeconds % 60L;
-        return hours > 0
-                ? String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
-                : String.format(Locale.US, "%02d:%02d", minutes, seconds);
+    private void resetAudioTrackToDefault() {
+        if (trackSelector == null) return;
+        trackSelector.setParameters(trackSelector.buildUponParameters()
+                .clearSelectionOverrides().build());
+        configStore.setPreferredAudioTrackIndex(-1);
+        Toast.makeText(this, getString(R.string.audio_track_selected_default),
+                Toast.LENGTH_SHORT).show();
+    }
+
+    /** 新 MediaItem 就绪后自动应用上次用户选择的音轨 index；用户没选过则保持默认。 */
+    private void applySavedAudioTrackOverride() {
+        if (trackSelector == null || player == null) return;
+        int saved = configStore.preferredAudioTrackIndex();
+        if (saved < 0) return;
+        Tracks.Group group = firstAudioTrackGroup();
+        if (group == null || saved >= group.length || !group.isTrackSupported(saved)) return;
+        // 已生效则不重复写入（避免 onTracksChanged 风暴）
+        if (group.isTrackSelected(saved)) return;
+        trackSelector.setParameters(trackSelector.buildUponParameters()
+                .addOverride(new DefaultTrackSelector.SelectionOverride(
+                        C.TRACK_TYPE_AUDIO, 0, saved))
+                .build());
+    }
+
+    private Tracks.Group firstAudioTrackGroup() {
+        Tracks tracks = player.getCurrentTracks();
+        List<Tracks.Group> audioGroups = tracks.getGroups(Tracks.GROUP_TYPE_AUDIO);
+        for (Tracks.Group g : audioGroups) {
+            if (g.length > 0) return g;
+        }
+        return null;
     }
 
     @SuppressWarnings("deprecation")

@@ -7,6 +7,8 @@ public final class PlaylistItem {
     private final String uri;
     private final String displayName;
     private final MediaKind kind;
+    /** Per-item image display seconds from the server program; null = follow device default. */
+    private final Integer durationSec;
 
     /** Legacy constructor: V1.0.0-V1.2.0 playlist entries were all videos. */
     public PlaylistItem(String uri, String displayName) {
@@ -14,10 +16,15 @@ public final class PlaylistItem {
     }
 
     public PlaylistItem(String uri, String displayName, MediaKind kind) {
+        this(uri, displayName, kind, null);
+    }
+
+    public PlaylistItem(String uri, String displayName, MediaKind kind, Integer durationSec) {
         this.uri = requireValue(uri, "uri");
         String normalizedName = normalize(displayName);
         this.displayName = normalizedName == null ? this.uri : normalizedName;
         this.kind = Objects.requireNonNull(kind, "kind");
+        this.durationSec = durationSec != null && durationSec > 0 ? durationSec : null;
     }
 
     public String uri() {
@@ -32,6 +39,11 @@ public final class PlaylistItem {
         return kind;
     }
 
+    /** Image-only display seconds; null means the global ImageDuration setting applies. */
+    public Integer durationSec() {
+        return durationSec;
+    }
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -43,12 +55,13 @@ public final class PlaylistItem {
         PlaylistItem item = (PlaylistItem) other;
         return uri.equals(item.uri)
                 && displayName.equals(item.displayName)
-                && kind == item.kind;
+                && kind == item.kind
+                && Objects.equals(durationSec, item.durationSec);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(uri, displayName, kind);
+        return Objects.hash(uri, displayName, kind, durationSec);
     }
 
     private static String requireValue(String value, String fieldName) {

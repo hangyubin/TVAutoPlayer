@@ -6,6 +6,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 const db = require('./db');
 const { buildManifest, validateSchedule, newScheduleId } = require('./manifest');
 
@@ -195,6 +196,66 @@ const copyRange = (src, start, end, dest) => new Promise((resolve, reject) => {
     .on('error', reject);
 });
 
+// ---------- 旧封装 MKV 处理 ----------
+// 2008 年前后 mkvmerge v2 时代生成的 MKV（DocTypeVersion=1，常伴 zlib 压缩字幕轨），
+// 会被电视端 Media3 解析器拒绝（ERROR_CODE_PARSING_CONTAINER_MALFORMED）。
+// 主机装有 ffmpeg 时上传自动无损重封装（-c copy，剥离字幕轨）；否则拒绝并给出指引。
+let ffmpegChecked = false, ffmpegOk = false;
+function ffmpegAvailable() {
+  if (!ffmpegChecked) {
+    ffmpegChecked = true;
+    try { ffmpegOk = spawnSync('ffmpeg', ['-version'], { timeout: 5000 }).status === 0; }
+    catch { ffmpegOk = false; }
+    if (ffmpegOk) console.log('[mkv] 检测到 ffmpeg，旧封装 MKV 上传时将自动重封装');
+  }
+  return ffmpegOk;
+}
+
+// 读取上传区间头部 EBML，识别 DocTypeVersion=1 的旧封装；解析失败一律放行（不误伤正常文件）
+function isLegacyMkv(tmp, start) {
+  let fd = null;
+  try {
+    fd = fs.openSync(tmp, 'r');
+    const head = Buffer.alloc(4096);
+    const n = fs.readSync(fd, head, 0, head.length, start);
+    if (n < 32) return false;
+    const b = head.slice(0, n);
+    if (b.readUInt32BE(0) !== 0x1A45DFA3) return false; // 非 EBML
+    const docTypeAt = b.indexOf(Buffer.from([0x42, 0x82])); // DocType
+    const verAt = b.indexOf(Buffer.from([0x42, 0x87]));     // DocTypeVersion
+    if (docTypeAt < 0 || verAt < 0 || verAt + 3 >= b.length) return false;
+    const docLen = b[docTypeAt + 2] - 0x80;
+    if (docLen <= 0 || docTypeAt + 3 + docLen > b.length) return false;
+    const docType = b.slice(docTypeAt + 3, docTypeAt + 3 + docLen).toString('latin1');
+    return docType === 'matroska' && b[verAt + 3] < 2;
+  } catch { return false; }
+  finally { if (fd !== null) fs.closeSync(fd); }
+}
+
+// 无损重封装：视频流 + 第一条音频流 -c copy，剥离字幕轨，容器重写为现代格式。
+// 成功返回新的上传描述（up.tmp 指向重封装产物）；失败返回 error 文案。
+async function remuxMkv(up) {
+  const src = path.join(MEDIA_DIR, `.remux-src-${crypto.randomUUID()}.mkv`);
+  const dst = path.join(MEDIA_DIR, `.remux-dst-${crypto.randomUUID()}.mkv`);
+  try {
+    await copyRange(up.tmp, up.start, up.end, src);
+    // spawnSync 会短暂阻塞事件循环（数百 MB 约数秒），终端轮询超时后自动重试，可接受
+    const r = spawnSync('ffmpeg', [
+      '-v', 'error', '-y', '-i', src,
+      '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-sn', dst,
+    ], { timeout: 300000 });
+    if (r.status !== 0 || !fs.existsSync(dst)) throw new Error(r.stderr ? String(r.stderr).slice(0, 200) : 'ffmpeg 失败');
+    const size = fs.statSync(dst).size;
+    fs.rmSync(src, { force: true });
+    fs.rmSync(up.tmp, { force: true });
+    return { up: { filename: up.filename, tmp: dst, start: 0, end: size - 1, size } };
+  } catch (e) {
+    fs.rmSync(src, { force: true });
+    fs.rmSync(dst, { force: true });
+    return { error: '旧封装 MKV 自动重封装失败，请手动执行 ffmpeg -i 文件.mkv -c copy 输出.mkv 后重新上传' };
+  }
+}
+
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -297,9 +358,22 @@ const server = http.createServer(async (req, res) => {
       return ok(res, db.prepare('SELECT * FROM media ORDER BY id DESC').all());
     }
     if (p === '/api/media' && req.method === 'POST') {
-      const up = await saveUpload(req);
+      let up = await saveUpload(req);
       const kind = kindOf(up.filename);
       if (!kind) { fs.rmSync(up.tmp, { force: true }); return bad(res, '不支持的格式（仅图片/视频）'); }
+      if (kind === 'VIDEO' && path.extname(up.filename).toLowerCase() === '.mkv' && isLegacyMkv(up.tmp, up.start)) {
+        if (!ffmpegAvailable()) {
+          fs.rmSync(up.tmp, { force: true });
+          return send(res, 422, { error: '该 MKV 为 2008 年前后的旧封装，电视端无法解析。请在服务器安装 ffmpeg 后重新上传（将自动无损重封装），或手动执行 ffmpeg -i 文件.mkv -c copy 输出.mkv 后上传' });
+        }
+        const rr = await remuxMkv(up);
+        if (rr.error) {
+          fs.rmSync(up.tmp, { force: true });
+          return send(res, 422, { error: rr.error });
+        }
+        up = rr.up;
+        console.log(`[mkv] ${up.filename} 为旧封装，已自动重封装`);
+      }
       const sha256 = await sha256OfRange(up.tmp, up.start, up.end);
       const exists = db.prepare('SELECT * FROM media WHERE sha256 = ? AND kind = ?').get(sha256, kind);
       if (exists) {

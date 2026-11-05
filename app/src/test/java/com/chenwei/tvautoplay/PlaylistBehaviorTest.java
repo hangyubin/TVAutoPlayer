@@ -90,6 +90,21 @@ public final class PlaylistBehaviorTest {
         assertEquals(2, configuration.mediaCount());
     }
 
+    @Test
+    public void configurationPreservesDuplicateUrisFromRemotePrograms() {
+        List<PlaylistItem> remote = Arrays.asList(
+                item("http://server/media/a1.jpg", "Remote image #1"),
+                item("http://server/media/b2.mp4", "Remote video #2"),
+                item("http://server/media/a1.jpg", "Remote image #3")
+        );
+
+        PlaybackConfiguration configuration = new PlaybackConfiguration(
+                remote, true, true, ScaleMode.FIT);
+
+        assertEquals(3, configuration.mediaCount());
+        assertEquals(remote, configuration.playlist());
+    }
+
     private static PlaylistItem item(String uri, String name) {
         return new PlaylistItem(uri, name);
     }

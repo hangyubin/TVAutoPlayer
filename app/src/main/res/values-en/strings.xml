@@ -145,6 +145,10 @@
     <string name="usb_status_value">USB folder: %1$d media files</string>
     <string name="usb_status_empty">USB folder not found: put files in the TVAutoPlayer folder at the USB root.</string>
     <string name="no_media_in_usb">No media found in USB mode. Put images or videos into the TVAutoPlayer folder at the USB root; playback starts automatically after the drive is reinserted.</string>
-    <!-- Video progress overlay -->
-    <string name="video_progress_format">%1$s / %2$s</string>
+    <string name="no_media_remote">The server program is empty. Add media to the default program in the admin console; if only schedules are configured, playback starts automatically when a schedule begins.</string>
+    <string name="audio_track_none">No audio tracks in current video</string>
+    <string name="audio_track_selected">Audio track %1$d / %2$d (press 1-%2$d to switch, 0 for default)</string>
+    <string name="audio_track_selected_default">Audio track: default (press 1-9 to switch, 0 to reset)</string>
+    <string name="audio_track_out_of_range">Video has only %1$d audio track(s)</string>
+    <string name="audio_track_not_supported">Audio track %1$d is not supported</string>
 </resources>

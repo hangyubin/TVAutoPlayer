@@ -78,7 +78,7 @@ public final class RemoteContentBridge {
             String name = it.kind == MediaKind.IMAGE
                     ? "Remote image #" + seq
                     : "Remote video #" + seq;
-            out.add(new PlaylistItem(it.url, name, it.kind));
+            out.add(new PlaylistItem(it.url, name, it.kind, it.durationSec));
             seq++;
         }
         return out;

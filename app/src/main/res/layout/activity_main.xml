@@ -7,9 +7,9 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:keepScreenOn="true"
-        app:auto_show="false"
+        app:auto_show="true"
         app:show_buffering="when_playing"
-        app:show_timeout="5000"
+        app:show_timeout="4000"
         app:use_controller="true" />
 
     <LinearLayout
@@ -105,34 +105,5 @@
             android:textSize="@dimen/button_text_size" />
     </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/video_progress_panel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:layout_marginStart="@dimen/screen_horizontal_margin"
-        android:layout_marginEnd="@dimen/screen_horizontal_margin"
-        android:layout_marginBottom="20dp"
-        android:background="@drawable/panel_background"
-        android:orientation="vertical"
-        android:padding="12dp"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/video_time_text"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="@color/text_secondary"
-            android:textSize="16sp" />
-
-        <ProgressBar
-            android:id="@+id/video_progress_bar"
-            style="?android:attr/progressBarStyleHorizontal"
-            android:layout_width="match_parent"
-            android:layout_height="6dp"
-            android:layout_marginTop="6dp"
-            android:max="1000"
-            android:progressTint="@color/text_primary" />
-    </LinearLayout>
 
 </merge>

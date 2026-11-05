@@ -145,6 +145,10 @@
     <string name="usb_status_value">U 盘目录：%1$d 个媒体文件</string>
     <string name="usb_status_empty">未找到 U 盘目录：请把文件放到 U 盘根目录的 TVAutoPlayer 文件夹。</string>
     <string name="no_media_in_usb">U 盘模式没有找到媒体文件。请把图片或视频放入 U 盘根目录的 TVAutoPlayer 文件夹，重新插入 U 盘后会自动播放。</string>
-    <!-- Video progress overlay -->
-    <string name="video_progress_format">%1$s / %2$s</string>
+    <string name="no_media_remote">服务器节目单为空。请在管理后台把媒体加入默认节目单；若只配置了时段，到达时段开始时间后会自动播放。</string>
+    <string name="audio_track_none">当前视频没有音轨</string>
+    <string name="audio_track_selected">音轨：%1$d / %2$d（遥控器 1-%2$d 切音轨，0 恢复默认）</string>
+    <string name="audio_track_selected_default">音轨已恢复默认（遥控器 1-9 选音轨，0 回默认）</string>
+    <string name="audio_track_out_of_range">该视频只有 %1$d 条音轨</string>
+    <string name="audio_track_not_supported">音轨 %1$d 不支持，无法切换</string>
 </resources>

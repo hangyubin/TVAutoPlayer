@@ -117,10 +117,19 @@
 <section id="tab-program" class="card hidden">
   <h2>默认节目单（无时段命中时播放）</h2>
   <div class="row">
-    <select id="progMedia" class="grow"></select>
-    <input type="number" id="progDur" min="1" placeholder="秒">
-    <button class="btn" id="progAdd">添加</button>
+    <button class="btn sub" id="progPickToggle">批量添加</button>
     <button class="btn" id="progSave">保存</button>
+    <span class="muted" id="progCount"></span>
+  </div>
+  <div id="progPicker" class="hidden" style="margin-top:10px;border:1px solid #e3e5e7;border-radius:6px;padding:10px">
+    <div class="row">
+      <button class="btn sub" id="pickAll">全选</button>
+      <button class="btn sub" id="pickNone">清空</button>
+      <input type="number" id="progDur" min="1" placeholder="秒">
+      <button class="btn" id="progAdd">添加选中</button>
+      <span class="muted">勾选后追加到节目单末尾</span>
+    </div>
+    <div id="progPickList" style="margin-top:8px;max-height:260px;overflow-y:auto"></div>
   </div>
   <p class="muted" style="margin:8px 0">拖动行可直接调整顺序；“秒”仅对图片生效，留空使用终端默认时长。保存后立即生效，电视端 30 秒内自动刷新。</p>
   <table><thead><tr>
@@ -210,8 +219,7 @@ async function loadMedia() {
       <td><button class="btn sub" onclick="openPreview('${url}', '${m.kind}')">预览</button>
           <button class="btn warn" onclick="delMedia(${m.id})">删除</button></td></tr>`;
   }).join('');
-  const opts = mediaOptionsHtml();
-  $('#progMedia').innerHTML = opts; $('#schMedia').innerHTML = opts;
+  $('#schMedia').innerHTML = mediaOptionsHtml();
 }
 const mediaOptionsHtml = () =>
   media.map(m => `<option value="${m.id}">[${m.kind==='IMAGE'?'图':'视'}] ${esc(m.orig_name)}</option>`).join('');
@@ -221,8 +229,8 @@ const mediaNameOf = (id) => {
 };
 const ensureMedia = async () => {
   media = await api('GET', '/api/media');
-  const opts = mediaOptionsHtml();
-  $('#progMedia').innerHTML = opts; $('#schMedia').innerHTML = opts;
+  $('#schMedia').innerHTML = mediaOptionsHtml();
+  if (!$('#progPicker').classList.contains('hidden')) renderPicker();
 };
 window.openPreview = (url, kind) => {
   const p = $('#preview');
@@ -344,6 +352,7 @@ async function loadProgram() {
   renderProgram();
 }
 function renderProgram() {
+  $('#progCount').textContent = '共 ' + program.length + ' 项';
   $('#progList').innerHTML = program.map((it, i) => `<tr class="drag-row" draggable="true" data-index="${i}">
     <td class="drag-handle">☰ ${i+1}</td><td title="${esc(it.name)}">${esc(it.name)}</td>
     <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
@@ -390,12 +399,34 @@ progList.addEventListener('drop', (e) => {
   clearDragMarks();
   renderProgram();
 });
+// 批量添加：勾选媒体库内容，一键追加到节目单末尾（点「保存」后生效）
+function renderPicker() {
+  $('#progPickList').innerHTML = media.map(m => `
+    <label style="display:flex;gap:8px;align-items:center;padding:4px 2px;cursor:pointer">
+      <input type="checkbox" value="${m.id}">
+      <span class="tag ${m.kind==='IMAGE'?'img':'vid'}">${m.kind==='IMAGE'?'图片':'视频'}</span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m.orig_name)}">${esc(m.orig_name)}</span>
+    </label>`).join('') || '<p class="muted">媒体库为空，请先到「媒体库」上传</p>';
+}
+$('#progPickToggle').onclick = () => {
+  const p = $('#progPicker');
+  p.classList.toggle('hidden');
+  if (!p.classList.contains('hidden')) renderPicker();
+};
+$('#pickAll').onclick = () => $('#progPickList').querySelectorAll('input[type=checkbox]').forEach(c => c.checked = true);
+$('#pickNone').onclick = () => $('#progPickList').querySelectorAll('input[type=checkbox]').forEach(c => c.checked = false);
 $('#progAdd').onclick = () => {
-  const mediaId = +$('#progMedia').value; if (!mediaId) return toast('请先上传媒体');
+  const ids = Array.from($('#progPickList').querySelectorAll('input[type=checkbox]:checked')).map(c => +c.value);
+  if (!ids.length) return toast('请先勾选媒体');
   const dur = +$('#progDur').value || null;
-  const m = media.find(x => x.id === mediaId);
-  program.push({ mediaId, durationSec: m.kind === 'IMAGE' ? dur : null, name: m.orig_name, kind: m.kind });
-  $('#progDur').value = ''; renderProgram();
+  for (const id of ids) {
+    const m = media.find(x => x.id === id);
+    if (m) program.push({ mediaId: id, durationSec: m.kind === 'IMAGE' ? dur : null, name: m.orig_name, kind: m.kind });
+  }
+  $('#progDur').value = '';
+  $('#pickNone').click();
+  renderProgram();
+  toast('已添加 ' + ids.length + ' 项，点「保存」后生效');
 };
 $('#progSave').onclick = async () => {
   await api('PUT', '/api/program', { items: program.map(it => ({ mediaId: it.mediaId, durationSec: it.durationSec })) });
@@ -578,9 +609,9 @@ function showLogin() {
 }
 function showMain() {
   document.querySelector('nav').classList.remove('hidden');
-  document.querySelectorAll('main > section').forEach(s => s.classList.remove('hidden'));
-  // 恢复媒体库为初始 tab
+  // 恢复媒体库为初始 tab，且只显示当前页签的内容
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === 'media'));
+  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-media'));
 }
 $('#loginBtn').onclick = async () => {
   try {
