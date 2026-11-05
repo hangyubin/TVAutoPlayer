@@ -78,8 +78,6 @@ public final class MainActivity extends ComponentActivity {
     /** Last remote configuration received; used for 30 s schedule-boundary checks. */
     private PlaybackConfiguration lastRemoteConfig;
     private List<PlaylistItem> currentPlayable = new ArrayList<>();
-    /** Media item index for which the "saved audio track unavailable" toast was already shown. */
-    private int audioNotifyMediaItemIndex = -1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -531,7 +529,6 @@ public final class MainActivity extends ComponentActivity {
         }
         activePlaylistSize = 0;
         consecutivePlaybackFailures = 0;
-        audioNotifyMediaItemIndex = -1;
     }
 
     // ---------- Audio track switching (remote 1-9 pick, 0 for default) ----------
@@ -566,29 +563,15 @@ public final class MainActivity extends ComponentActivity {
     private void selectAudioTrack(int index) {
         if (player == null) return;
         List<AudioTrackRef> entries = audioTrackEntries();
-        if (entries.isEmpty()) {
-            Toast.makeText(this, R.string.audio_track_none, Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if (index >= entries.size()) {
-            Toast.makeText(this, getString(R.string.audio_track_out_of_range,
-                    index + 1, entries.size()), Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (index >= entries.size()) return;
         AudioTrackRef ref = entries.get(index);
-        if (!ref.group.isTrackSupported(ref.indexInGroup)) {
-            Toast.makeText(this, getString(R.string.audio_track_not_supported,
-                    index + 1), Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (!ref.group.isTrackSupported(ref.indexInGroup)) return;
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
                         .setOverrideForType(new TrackSelectionOverride(
                                 ref.group.getMediaTrackGroup(), ref.indexInGroup))
                         .build());
         configStore.setPreferredAudioTrackIndex(index);
-        Toast.makeText(this, getString(R.string.audio_track_selected,
-                index + 1, entries.size()), Toast.LENGTH_SHORT).show();
     }
 
     private void resetAudioTrackToDefault() {
@@ -598,8 +581,6 @@ public final class MainActivity extends ComponentActivity {
                         .clearOverrides()
                         .build());
         configStore.setPreferredAudioTrackIndex(-1);
-        Toast.makeText(this, getString(R.string.audio_track_selected_default),
-                Toast.LENGTH_SHORT).show();
     }
 
     /** Applies the previously chosen audio track whenever the track list becomes available. */
@@ -608,17 +589,7 @@ public final class MainActivity extends ComponentActivity {
         int saved = configStore.preferredAudioTrackIndex();
         if (saved < 0) return;
         List<AudioTrackRef> entries = audioTrackEntries();
-        if (entries.isEmpty()) return;
-        if (saved >= entries.size()) {
-            // Explain once per media item why the saved choice cannot be honoured.
-            int itemIndex = player.getCurrentMediaItemIndex();
-            if (itemIndex != audioNotifyMediaItemIndex) {
-                audioNotifyMediaItemIndex = itemIndex;
-                Toast.makeText(this, getString(R.string.audio_track_out_of_range,
-                        saved + 1, entries.size()), Toast.LENGTH_LONG).show();
-            }
-            return;
-        }
+        if (saved >= entries.size()) return;
         AudioTrackRef ref = entries.get(saved);
         if (!ref.group.isTrackSupported(ref.indexInGroup)) return;
         // Already applied -> skip to avoid unnecessary override churn.
