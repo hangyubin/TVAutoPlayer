@@ -167,9 +167,12 @@ public final class SettingsActivity extends ComponentActivity {
         ));
 
         int savedTrack = configStore.preferredAudioTrackIndex();
-        audioTrackButton.setText(savedTrack < 0
-                ? R.string.audio_track_default
-                : getString(R.string.audio_track_button_value, savedTrack + 1));
+        if (savedTrack < 0) {
+            audioTrackButton.setText(R.string.audio_track_default);
+        } else {
+            audioTrackButton.setText(getString(
+                    R.string.audio_track_button_value, savedTrack + 1));
+        }
 
         if (remote) {
             usbStatus.setVisibility(TextView.GONE);
