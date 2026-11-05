@@ -547,7 +547,7 @@ public final class MainActivity extends ComponentActivity {
         }
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
-                        .setOverrideForType(C.TRACK_TYPE_AUDIO,
+                        .setOverrideForType(
                                 new TrackSelectionOverride(group.getMediaTrackGroup(), index))
                         .build());
         configStore.setPreferredAudioTrackIndex(index);
@@ -559,7 +559,7 @@ public final class MainActivity extends ComponentActivity {
         if (player == null) return;
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
-                        .setOverrideForType(C.TRACK_TYPE_AUDIO, null)
+                        .clearOverrides()
                         .build());
         configStore.setPreferredAudioTrackIndex(-1);
         Toast.makeText(this, getString(R.string.audio_track_selected_default),
@@ -577,7 +577,7 @@ public final class MainActivity extends ComponentActivity {
         if (group.isTrackSelected(saved)) return;
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
-                        .setOverrideForType(C.TRACK_TYPE_AUDIO,
+                        .setOverrideForType(
                                 new TrackSelectionOverride(group.getMediaTrackGroup(), saved))
                         .build());
     }
