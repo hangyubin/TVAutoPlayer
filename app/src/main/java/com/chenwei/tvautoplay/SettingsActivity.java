@@ -36,6 +36,7 @@ public final class SettingsActivity extends ComponentActivity {
     private Button soundButton;
     private Button scaleButton;
     private Button imageDurationButton;
+    private Button audioTrackButton;
     private ActivityResultLauncher<String[]> permissionLauncher;
     private boolean destroyed;
 
@@ -57,6 +58,7 @@ public final class SettingsActivity extends ComponentActivity {
         soundButton = findViewById(R.id.sound_button);
         scaleButton = findViewById(R.id.scale_button);
         imageDurationButton = findViewById(R.id.image_duration_button);
+        audioTrackButton = findViewById(R.id.audio_track_button);
 
         playModeButton.setOnClickListener(view -> togglePlayMode());
         serverUrlButton.setOnClickListener(view -> editServerUrl());
@@ -66,6 +68,7 @@ public final class SettingsActivity extends ComponentActivity {
         soundButton.setOnClickListener(view -> toggleSound());
         scaleButton.setOnClickListener(view -> toggleScaleMode());
         imageDurationButton.setOnClickListener(view -> toggleImageDuration());
+        audioTrackButton.setOnClickListener(view -> pickAudioTrack());
 
         refreshValues();
     }
@@ -163,6 +166,11 @@ public final class SettingsActivity extends ComponentActivity {
                 configuration.imageDuration().seconds()
         ));
 
+        int savedTrack = configStore.preferredAudioTrackIndex();
+        audioTrackButton.setText(savedTrack < 0
+                ? R.string.audio_track_default
+                : getString(R.string.audio_track_button_value, savedTrack + 1));
+
         if (remote) {
             usbStatus.setVisibility(TextView.GONE);
         } else {
@@ -220,6 +228,29 @@ public final class SettingsActivity extends ComponentActivity {
                     setResult(RESULT_OK);
                     refreshValues();
                 })
+                .show();
+    }
+
+    private void pickAudioTrack() {
+        int saved = configStore.preferredAudioTrackIndex();
+        int maxTrack = 9;
+        String[] labels = new String[maxTrack + 1];
+        labels[0] = getString(R.string.audio_track_option_default);
+        int checkedIndex = 0;
+        for (int i = 0; i < maxTrack; i++) {
+            labels[i + 1] = getString(R.string.audio_track_option_n, i + 1);
+            if (saved == i) checkedIndex = i + 1;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.audio_track_dialog_title)
+                .setSingleChoiceItems(labels, checkedIndex, (dialog, which) -> {
+                    int index = which - 1; // -1 = default, 0..8 = track 1..9
+                    configStore.setPreferredAudioTrackIndex(index);
+                    setResult(RESULT_OK);
+                    refreshValues();
+                    dialog.dismiss();
+                })
+                .setNegativeButton(R.string.cancel, null)
                 .show();
     }
 

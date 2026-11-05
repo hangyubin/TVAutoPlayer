@@ -151,4 +151,10 @@
     <string name="audio_track_selected_default">Audio track: default (press 1-9 to switch, 0 to reset)</string>
     <string name="audio_track_out_of_range">Track %1$d not found — video only has %2$d audio track(s)</string>
     <string name="audio_track_not_supported">Audio track %1$d is not supported</string>
+    <string name="audio_track_default">Audio track: default</string>
+    <string name="audio_track_button_value">Audio track: %1$d</string>
+    <string name="audio_track_description">Applied automatically on playback; "default" follows the video's original audio</string>
+    <string name="audio_track_dialog_title">Select audio track</string>
+    <string name="audio_track_option_default">Follow default</string>
+    <string name="audio_track_option_n">Track %1$d</string>
 </resources>

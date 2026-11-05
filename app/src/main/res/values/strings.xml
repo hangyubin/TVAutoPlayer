@@ -151,4 +151,10 @@
     <string name="audio_track_selected_default">音轨已恢复默认（遥控器 1-9 选音轨，0 回默认）</string>
     <string name="audio_track_out_of_range">音轨 %1$d 不存在，该视频只有 %2$d 条音轨</string>
     <string name="audio_track_not_supported">音轨 %1$d 不支持，无法切换</string>
+    <string name="audio_track_default">音轨：跟随默认</string>
+    <string name="audio_track_button_value">音轨：%1$d</string>
+    <string name="audio_track_description">播放时自动应用所选音轨；设为"跟随默认"则按视频原音轨输出</string>
+    <string name="audio_track_dialog_title">选择播放音轨</string>
+    <string name="audio_track_option_default">跟随默认</string>
+    <string name="audio_track_option_n">音轨 %1$d</string>
 </resources>
