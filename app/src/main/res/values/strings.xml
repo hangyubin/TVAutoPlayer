@@ -153,7 +153,7 @@
     <string name="audio_track_not_supported">音轨 %1$d 不支持，无法切换</string>
     <string name="audio_track_default">音轨：跟随默认</string>
     <string name="audio_track_button_value">音轨：%1$d</string>
-    <string name="audio_track_description">播放时自动应用所选音轨；设为"跟随默认"则按视频原音轨输出</string>
+    <string name="audio_track_description">每次播放新视频自动应用所选音轨。选跟随默认保持视频原音轨，或指定音轨序号。</string>
     <string name="audio_track_dialog_title">选择播放音轨</string>
     <string name="audio_track_option_default">跟随默认</string>
     <string name="audio_track_option_n">音轨 %1$d</string>
