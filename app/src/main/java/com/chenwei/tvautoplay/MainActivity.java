@@ -78,6 +78,8 @@ public final class MainActivity extends ComponentActivity {
     /** Last remote configuration received; used for 30 s schedule-boundary checks. */
     private PlaybackConfiguration lastRemoteConfig;
     private List<PlaylistItem> currentPlayable = new ArrayList<>();
+    /** Media item index for which the "saved audio track unavailable" toast was already shown. */
+    private int audioNotifyMediaItemIndex = -1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -380,9 +382,14 @@ public final class MainActivity extends ComponentActivity {
                 if (playbackState == Player.STATE_READY) {
                     consecutivePlaybackFailures = 0;
                     errorPanel.setVisibility(View.GONE);
-                    // Apply the user's previously chosen audio track whenever a new MediaItem is ready.
-                    applySavedAudioTrackOverride();
                 }
+            }
+
+            @Override
+            public void onTracksChanged(Tracks tracks) {
+                // Tracks are only published after the renderers have probed the media,
+                // which can happen slightly after STATE_READY. This is the reliable hook.
+                applySavedAudioTrackOverride();
             }
         });
 
@@ -524,35 +531,64 @@ public final class MainActivity extends ComponentActivity {
         }
         activePlaylistSize = 0;
         consecutivePlaybackFailures = 0;
+        audioNotifyMediaItemIndex = -1;
     }
 
     // ---------- Audio track switching (remote 1-9 pick, 0 for default) ----------
 
+    /** One selectable audio track: which group it belongs to and its index inside that group. */
+    private static final class AudioTrackRef {
+        final Tracks.Group group;
+        final int indexInGroup;
+
+        AudioTrackRef(Tracks.Group group, int indexInGroup) {
+            this.group = group;
+            this.indexInGroup = indexInGroup;
+        }
+    }
+
+    /**
+     * Flattens every audio track across all audio groups. A single MediaItem can expose several
+     * audio groups (e.g. one per codec), so "track N" must be counted globally, not per group.
+     */
+    private List<AudioTrackRef> audioTrackEntries() {
+        List<AudioTrackRef> entries = new ArrayList<>();
+        if (player == null) return entries;
+        for (Tracks.Group group : player.getCurrentTracks().getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_AUDIO) continue;
+            for (int i = 0; i < group.length; i++) {
+                entries.add(new AudioTrackRef(group, i));
+            }
+        }
+        return entries;
+    }
+
     private void selectAudioTrack(int index) {
         if (player == null) return;
-        Tracks.Group group = firstAudioTrackGroup();
-        if (group == null) {
+        List<AudioTrackRef> entries = audioTrackEntries();
+        if (entries.isEmpty()) {
             Toast.makeText(this, R.string.audio_track_none, Toast.LENGTH_SHORT).show();
             return;
         }
-        if (index >= group.length) {
+        if (index >= entries.size()) {
             Toast.makeText(this, getString(R.string.audio_track_out_of_range,
-                    index + 1, group.length), Toast.LENGTH_SHORT).show();
+                    index + 1, entries.size()), Toast.LENGTH_SHORT).show();
             return;
         }
-        if (!group.isTrackSupported(index)) {
+        AudioTrackRef ref = entries.get(index);
+        if (!ref.group.isTrackSupported(ref.indexInGroup)) {
             Toast.makeText(this, getString(R.string.audio_track_not_supported,
                     index + 1), Toast.LENGTH_SHORT).show();
             return;
         }
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
-                        .setOverrideForType(
-                                new TrackSelectionOverride(group.getMediaTrackGroup(), index))
+                        .setOverrideForType(new TrackSelectionOverride(
+                                ref.group.getMediaTrackGroup(), ref.indexInGroup))
                         .build());
         configStore.setPreferredAudioTrackIndex(index);
         Toast.makeText(this, getString(R.string.audio_track_selected,
-                index + 1, group.length), Toast.LENGTH_SHORT).show();
+                index + 1, entries.size()), Toast.LENGTH_SHORT).show();
     }
 
     private void resetAudioTrackToDefault() {
@@ -566,28 +602,32 @@ public final class MainActivity extends ComponentActivity {
                 Toast.LENGTH_SHORT).show();
     }
 
-    /** Applies the previously chosen audio track whenever a new MediaItem is ready. No-op when not set. */
+    /** Applies the previously chosen audio track whenever the track list becomes available. */
     private void applySavedAudioTrackOverride() {
         if (player == null) return;
         int saved = configStore.preferredAudioTrackIndex();
         if (saved < 0) return;
-        Tracks.Group group = firstAudioTrackGroup();
-        if (group == null || saved >= group.length || !group.isTrackSupported(saved)) return;
+        List<AudioTrackRef> entries = audioTrackEntries();
+        if (entries.isEmpty()) return;
+        if (saved >= entries.size()) {
+            // Explain once per media item why the saved choice cannot be honoured.
+            int itemIndex = player.getCurrentMediaItemIndex();
+            if (itemIndex != audioNotifyMediaItemIndex) {
+                audioNotifyMediaItemIndex = itemIndex;
+                Toast.makeText(this, getString(R.string.audio_track_out_of_range,
+                        saved + 1, entries.size()), Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        AudioTrackRef ref = entries.get(saved);
+        if (!ref.group.isTrackSupported(ref.indexInGroup)) return;
         // Already applied -> skip to avoid unnecessary override churn.
-        if (group.isTrackSelected(saved)) return;
+        if (ref.group.isTrackSelected(ref.indexInGroup)) return;
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
-                        .setOverrideForType(
-                                new TrackSelectionOverride(group.getMediaTrackGroup(), saved))
+                        .setOverrideForType(new TrackSelectionOverride(
+                                ref.group.getMediaTrackGroup(), ref.indexInGroup))
                         .build());
-    }
-
-    private Tracks.Group firstAudioTrackGroup() {
-        Tracks tracks = player.getCurrentTracks();
-        for (Tracks.Group g : tracks.getGroups()) {
-            if (g.getType() == C.TRACK_TYPE_AUDIO && g.length > 0) return g;
-        }
-        return null;
     }
 
     @SuppressWarnings("deprecation")
