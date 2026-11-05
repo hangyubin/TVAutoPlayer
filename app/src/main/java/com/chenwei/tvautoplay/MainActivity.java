@@ -24,10 +24,10 @@ import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
@@ -62,7 +62,6 @@ public final class MainActivity extends ComponentActivity {
     private TextView errorMessage;
     private PlaybackConfigStore configStore;
     private ExoPlayer player;
-    private DefaultTrackSelector trackSelector;
     private boolean settingsOpen;
     private boolean selectionPromptAttempted;
     private boolean permissionRequested;
@@ -359,9 +358,7 @@ public final class MainActivity extends ComponentActivity {
         releasePlayer();
         consecutivePlaybackFailures = 0;
         activePlaylistSize = playable.size();
-        trackSelector = new DefaultTrackSelector(this);
         player = new ExoPlayer.Builder(this)
-                .setTrackSelector(trackSelector)
                 .setAudioAttributes(
                         new AudioAttributes.Builder()
                                 .setUsage(C.USAGE_MEDIA)
@@ -520,7 +517,6 @@ public final class MainActivity extends ComponentActivity {
 
     private void releasePlayer() {
         currentPlayable = new ArrayList<>();
-        trackSelector = null;
         if (player != null) {
             playerView.setPlayer(null);
             player.release();
@@ -533,7 +529,7 @@ public final class MainActivity extends ComponentActivity {
     // ---------- Audio track switching (remote 1-9 pick, 0 for default) ----------
 
     private void selectAudioTrack(int index) {
-        if (trackSelector == null || player == null) return;
+        if (player == null) return;
         Tracks.Group group = firstAudioTrackGroup();
         if (group == null) {
             Toast.makeText(this, R.string.audio_track_none, Toast.LENGTH_SHORT).show();
@@ -549,19 +545,22 @@ public final class MainActivity extends ComponentActivity {
                     index + 1), Toast.LENGTH_SHORT).show();
             return;
         }
-        trackSelector.setParameters(trackSelector.buildUponParameters()
-                .addOverride(new DefaultTrackSelector.SelectionOverride(
-                        C.TRACK_TYPE_AUDIO, 0, index))
-                .build());
+        player.setTrackSelectionParameters(
+                player.getTrackSelectionParameters().buildUpon()
+                        .setOverrideForType(C.TRACK_TYPE_AUDIO,
+                                new TrackSelectionOverride(group.getMediaTrackGroup(), index))
+                        .build());
         configStore.setPreferredAudioTrackIndex(index);
         Toast.makeText(this, getString(R.string.audio_track_selected,
                 index + 1, group.length), Toast.LENGTH_SHORT).show();
     }
 
     private void resetAudioTrackToDefault() {
-        if (trackSelector == null) return;
-        trackSelector.setParameters(trackSelector.buildUponParameters()
-                .clearSelectionOverrides().build());
+        if (player == null) return;
+        player.setTrackSelectionParameters(
+                player.getTrackSelectionParameters().buildUpon()
+                        .setOverrideForType(C.TRACK_TYPE_AUDIO, null)
+                        .build());
         configStore.setPreferredAudioTrackIndex(-1);
         Toast.makeText(this, getString(R.string.audio_track_selected_default),
                 Toast.LENGTH_SHORT).show();
@@ -569,24 +568,24 @@ public final class MainActivity extends ComponentActivity {
 
     /** Applies the previously chosen audio track whenever a new MediaItem is ready. No-op when not set. */
     private void applySavedAudioTrackOverride() {
-        if (trackSelector == null || player == null) return;
+        if (player == null) return;
         int saved = configStore.preferredAudioTrackIndex();
         if (saved < 0) return;
         Tracks.Group group = firstAudioTrackGroup();
         if (group == null || saved >= group.length || !group.isTrackSupported(saved)) return;
         // Already applied -> skip to avoid unnecessary override churn.
         if (group.isTrackSelected(saved)) return;
-        trackSelector.setParameters(trackSelector.buildUponParameters()
-                .addOverride(new DefaultTrackSelector.SelectionOverride(
-                        C.TRACK_TYPE_AUDIO, 0, saved))
-                .build());
+        player.setTrackSelectionParameters(
+                player.getTrackSelectionParameters().buildUpon()
+                        .setOverrideForType(C.TRACK_TYPE_AUDIO,
+                                new TrackSelectionOverride(group.getMediaTrackGroup(), saved))
+                        .build());
     }
 
     private Tracks.Group firstAudioTrackGroup() {
         Tracks tracks = player.getCurrentTracks();
-        List<Tracks.Group> audioGroups = tracks.getGroups(Tracks.GROUP_TYPE_AUDIO);
-        for (Tracks.Group g : audioGroups) {
-            if (g.length > 0) return g;
+        for (Tracks.Group g : tracks.getGroups()) {
+            if (g.getType() == C.TRACK_TYPE_AUDIO && g.length > 0) return g;
         }
         return null;
     }
