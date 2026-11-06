@@ -2,7 +2,7 @@
 
 ## 测试部署
 
-1. 从 [GitHub Release v1.5.0](https://github.com/chenwei666/TVAutoPlayer/releases/tag/v1.5.0) 下载 `TVAutoPlayer-v1.5.0-debug.apk` 并复制到 U 盘。
+1. 从 [GitHub Release v1.6.0](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.6.0) 下载 `TVAutoPlayer-v1.6.0-debug.apk` 并复制到 U 盘。
 2. 电视开启“允许安装未知来源应用”。
 3. 安装 APK，首次打开后授予照片和视频只读权限，在内置媒体库中选择图片或视频。
 4. 在电视的应用/电池/后台管理中允许本应用自启动和后台运行。
@@ -11,7 +11,7 @@
 ADB 安装：
 
 ```powershell
-adb install -r .\TVAutoPlayer-v1.5.0-debug.apk
+adb install -r .\TVAutoPlayer-v1.6.0-debug.apk
 ```
 
 模拟开机广播（仅测试，不等同于真实冷启动）：
@@ -52,6 +52,98 @@ adb shell am broadcast -a android.intent.action.BOOT_COMPLETED com.chenwei.tvaut
 3. 为每个规则从内置媒体库选择独立的图片/视频列表；启用规则不能重叠，结束早于开始表示跨午夜。
 4. 保持应用在前台运行；时间边界会在约 30 秒内触发切换。
 5. 若只配置未来时间段且默认列表为空，应用开机后显示等待页，到点后自动开始；这仍受电视厂商自启动限制。
+
+## 服务端部署
+
+服务端是零依赖的 Node.js 程序（要求 Node.js 22.5 及以上，使用内置 `node:sqlite`），负责媒体存储、默认节目单、直播源和时段计划，并向电视端下发 manifest。数据保存在 `server/data.db`，媒体文件保存在 `server/media/`。
+
+### Linux
+
+1. 安装 Node.js 22.5+（推荐 24）：
+
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+   sudo apt install -y nodejs
+   node -v
+   ```
+
+2. 在项目目录启动：
+
+   ```bash
+   cd /path/to/TVAutoPlayer/server
+   PORT=8300 node server.js
+   ```
+
+3. 浏览器访问 `http://服务器IP:8300/`，默认账户 `admin / admin`，登录后立即修改密码。
+4. 放行端口：`sudo ufw allow 8300/tcp`；云服务器还需要在安全组中放行。
+5. 需要旧封装 MKV 自动重封装时安装 ffmpeg：`sudo apt install -y ffmpeg`。不安装只影响旧 MKV 上传，其他功能正常。
+
+常驻运行（systemd）：
+
+```ini
+[Unit]
+Description=TVAutoPlayer Server
+After=network.target
+
+[Service]
+WorkingDirectory=/path/to/TVAutoPlayer/server
+Environment=PORT=8300
+ExecStart=/usr/bin/node server.js
+Restart=always
+User=youruser
+
+[Install]
+WantedBy=multi-user.target
+```
+
+保存为 `/etc/systemd/system/tvautoplayer.service` 后执行：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now tvautoplayer
+sudo systemctl status tvautoplayer
+```
+
+> 升级时只替换 `.js` 文件与 `public/` 目录，不要覆盖 `data.db` 和 `media/`；这两项需要定期备份。
+
+### Windows（免安装绿色包）
+
+1. 下载 Release 中的 `TVAutoPlayer-Server-Windows.zip` 并解压，建议使用纯英文短路径。
+2. 双击 `启动服务.bat`。首次运行时 Windows 防火墙提示请点「允许访问」，否则电视端无法连接。
+3. 浏览器会自动打开 `http://localhost:8300/`，默认账户 `admin / admin`，登录后立即修改密码。
+4. 需要旧封装 MKV 自动重封装时，双击 `安装ffmpeg.bat`；不安装只影响旧 MKV。
+5. 关闭命令行窗口即停止服务。需要开机自启时，把 `启动服务.bat` 的快捷方式放入「启动」文件夹（`shell:startup`）。
+
+### 管理后台使用
+
+| 页签 | 用途 |
+|---|---|
+| 媒体库 | 上传图片/视频，按内容哈希去重，支持预览和删除 |
+| 节目单 | 默认播放内容，无时段命中时循环播放；支持批量添加和拖动排序 |
+| 直播源 | 保存多个 HLS/m3u8 源，添加时实测延迟与码率，可启停、复测、删除 |
+| 时段 | 30 分钟步进，一个时段只绑定一个内容，可绑定媒体或直播源 |
+
+所有保存操作都会通过长轮询在约 1 秒内推送到电视端。修改时段时间不会打断当前播放；内容结构未变化时电视端不重建播放器。
+
+直播源说明：
+
+- 地址必须以 `http://` 或 `https://` 开头，内容需为 m3u8 播放列表。
+- 添加时若延迟超过 3 秒或码率低于约 500 KB/s 会提示偏慢，可选择强制保存。
+- 直播源全部播放失败时，电视端自动回落默认节目单并进入 5 分钟冷却，避免反复重试。
+- 部分频道源存在地域或防盗链限制，请先用 VLC 在电视所在网络验证。
+
+### 电视端接入
+
+1. 电视与服务器需在同一局域网（或服务器可从公网访问）。
+2. 应用设置中把「播放模式」切换为「服务器」。
+3. 「服务器地址」填写 IP 或域名，例如 `192.168.2.166`，不需要 `http://` 前缀。
+4. 设置页会显示连接状态、内容版本号和上次更新时间。
+
+### 备份与迁移
+
+- 备份 `server/data.db`（含账户、媒体索引、节目单、直播源、时段）和 `server/media/`。
+- 迁移到新机器：复制这两项，加上 `server/*.js` 与 `server/public/`，使用相同端口启动即可。
+- 服务器重启后电视端会自动重连，无需重新配置。
 
 ## 大规模无人值守部署
 

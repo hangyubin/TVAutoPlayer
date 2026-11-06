@@ -153,7 +153,7 @@
 
 <section id="tab-schedules" class="card hidden">
   <h2>时段计划（命中时段自动切换，30 分钟步进，不可重叠）</h2>
-  <p class="muted" style="margin:8px 0">每个时段卡片内可添加多个媒体并拖动排序；修改后点「保存」生效。</p>
+  <p class="muted" style="margin:8px 0">一个时段只播一个内容（一个直播源或一个媒体），创建时选定，之后可用「更换」替换。修改时间只改变切换时刻，不会打断正在播放的内容。</p>
   <div class="row">
     <select id="schStart"></select><span>至</span><select id="schEnd"></select>
     <select id="schMedia" class="grow"></select>
@@ -538,7 +538,7 @@ function renderSchedules() {
       <td title="${esc(itemNameOf(it))}">${esc(itemNameOf(it))}</td>
       <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
       <td><button class="btn warn" onclick="schRmItem(${si},${i})">移除</button></td></tr>`).join('')
-      || '<tr><td colspan="4" class="muted">暂无内容，请在下方添加</td></tr>';
+      || '<tr><td colspan="4" class="muted">暂无内容</td></tr>';
     const timeEdit = schTimeEditing === si
       ? `<div class="row" style="margin-top:8px">
           <select id="editStart">${minuteOpts()}</select><span>至</span><select id="editEnd">${minuteOpts()}</select>
@@ -549,7 +549,7 @@ function renderSchedules() {
       <div class="row">
         <strong>${fmtMin(s.startMinute)} - ${fmtMin(s.endMinute)}${s.endMinute < s.startMinute ? '（跨午夜）' : ''}</strong>
         <span class="tag">${s.enabled ? '启用' : '停用'}</span>
-        <span class="muted">${s.items.length} 项</span>
+        <span class="muted">${s.items.length ? esc(itemNameOf(s.items[0])) : '无内容'}</span>
         <span class="grow"></span>
         <button class="btn sub" onclick="schStartEditTime(${si})">修改时间</button>
         <button class="btn sub" onclick="toggleSch(${si})">${s.enabled ? '停用' : '启用'}</button>
@@ -560,11 +560,18 @@ function renderSchedules() {
       <table style="margin-top:8px"><thead><tr>
         <th style="width:60px">拖动</th><th>文件</th><th style="width:80px">时长</th><th style="width:80px">操作</th>
       </tr></thead><tbody>${rows}</tbody></table>
-      <div class="row" style="margin-top:8px">
-        <select class="grow" id="schItemMedia${si}">${schedOptionsHtml()}</select>
-        <input type="number" id="schItemDur${si}" min="1" placeholder="秒">
-        <button class="btn" onclick="schAddItem(${si})">添加</button>
-      </div>
+      ${s.items.length
+        ? `<div class="row" style="margin-top:8px">
+             <span class="muted grow">一个时段只播一个内容，点「更换」可直接替换</span>
+             <select id="schItemMedia${si}" style="width:220px">${schedOptionsHtml()}</select>
+             <input type="number" id="schItemDur${si}" min="1" placeholder="秒">
+             <button class="btn sub" onclick="schReplaceItem(${si})">更换</button>
+           </div>`
+        : `<div class="row" style="margin-top:8px">
+             <select class="grow" id="schItemMedia${si}">${schedOptionsHtml()}</select>
+             <input type="number" id="schItemDur${si}" min="1" placeholder="秒">
+             <button class="btn" onclick="schAddItem(${si})">添加</button>
+           </div>`}
     </div>`;
   }).join('') || '<p class="muted" style="margin-top:12px">暂无时段</p>';
   if (schTimeEditing >= 0 && schedules[schTimeEditing]) {
@@ -627,6 +634,7 @@ window.schSaveTime = async (si) => {
   } catch {}
 };
 window.schAddItem = (si) => {
+  if (schedules[si].items.length) return toast('一个时段只能有一个内容，请用「更换」');
   const v = $(`#schItemMedia${si}`).value;
   if (!v) return toast('请先上传媒体或添加直播源');
   if (v.startsWith('live:')) {
@@ -640,6 +648,23 @@ window.schAddItem = (si) => {
   }
   renderSchedules();
 };
+window.schReplaceItem = (si) => {
+  const v = $(`#schItemMedia${si}`).value;
+  if (!v) return toast('请选择要替换的内容');
+  let item;
+  if (v.startsWith('live:')) {
+    item = { liveId: +v.slice(5) };
+  } else {
+    const mediaId = +v;
+    const m = media.find(x => x.id === mediaId);
+    if (!m) return toast('媒体不存在');
+    const dur = +$(`#schItemDur${si}`).value || null;
+    item = { mediaId, durationSec: m.kind === 'IMAGE' ? dur : null };
+  }
+  schedules[si].items = [item];
+  renderSchedules();
+  toast('已替换，点「保存」生效');
+};
 window.schRmItem = (si, i) => { schedules[si].items.splice(i, 1); renderSchedules(); };
 window.toggleSch = (si) => { schedules[si].enabled = !schedules[si].enabled; renderSchedules(); };
 window.saveSch = async (si) => {
@@ -649,7 +674,7 @@ window.saveSch = async (si) => {
     await api('PUT', '/api/schedules/' + s.id, {
       startMinute: s.startMinute, endMinute: s.endMinute, enabled: s.enabled, items: s.items,
     });
-    toast('时段已保存，电视端将在 30 秒内自动生效');
+    toast('时段已保存');
     loadSchedules();
   } catch {}
 };
@@ -675,7 +700,7 @@ $('#schAdd').onclick = async () => {
       startMinute: +$('#schStart').value, endMinute: +$('#schEnd').value,
       items: [item],
     });
-    toast('时段已添加，可在卡片中继续添加内容'); loadSchedules();
+    toast('时段已添加，修改内容后点「保存」'); loadSchedules();
   } catch {}
 };
 

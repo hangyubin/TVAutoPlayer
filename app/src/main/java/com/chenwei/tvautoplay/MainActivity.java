@@ -84,6 +84,8 @@ public final class MainActivity extends ComponentActivity {
     private String failedScheduleId;
     /** Earliest time the failed schedule may be retried by the 30 s tick. */
     private long failedScheduleRetryAtMillis;
+    /** Items the failed schedule was playing, used to tell a real edit from a time-only edit. */
+    private List<PlaylistItem> failedSchedulePlaylist;
     private boolean activityStarted;
     private ActivityResultLauncher<Intent> settingsLauncher;
     private ActivityResultLauncher<String[]> permissionLauncher;
@@ -326,19 +328,70 @@ public final class MainActivity extends ComponentActivity {
                     return;
                 }
                 lastRemoteConfig = config;
-                if (!force && version > 0 && version == appliedRemoteVersion && player != null) {
-                    // Content hash unchanged and already playing — keep going.
-                    return;
-                }
-                appliedRemoteVersion = version;
-                // Fresh content: drop any schedule-failure cooldown so admin fixes
-                // (e.g. a corrected live URL) apply immediately.
-                failedScheduleId = null;
-                // Tag with the resolved source id so the 30 s schedule-boundary tick
-                // compares like for like instead of restarting playback every tick.
-                renderConfiguration(config, null);
+                applyRemoteConfiguration(config, version, force);
             });
         });
+    }
+
+    /**
+     * Applies a freshly fetched remote configuration without needlessly restarting
+     * playback. A new content version does not always mean different playback: editing
+     * another slot's time changes the manifest hash while the currently effective
+     * playlist stays the same. Such updates are absorbed silently, and a playlist that
+     * only grew at its tail is appended, keeping the current item's position and
+     * progress instead of restarting it.
+     */
+    private void applyRemoteConfiguration(PlaybackConfiguration config, int version, boolean force) {
+        if (!force && version > 0 && version == appliedRemoteVersion && player != null) {
+            // Content hash unchanged and already playing — keep going.
+            return;
+        }
+        appliedRemoteVersion = version;
+        if (player != null) {
+            ResolvedPlaylist effective = resolveEffectivePlaylist(config);
+            if (effective.sourceId().equals(activePlaylistSourceId)) {
+                List<PlaylistItem> next = effective.playlist();
+                if (next.equals(currentPlayable)) {
+                    // Identical playback: leave the player untouched.
+                    return;
+                }
+                if (isTailAppend(currentPlayable, next)
+                        && player.getMediaItemCount() == currentPlayable.size()) {
+                    List<MediaItem> appended =
+                            new ArrayList<>(next.size() - currentPlayable.size());
+                    for (int i = currentPlayable.size(); i < next.size(); i++) {
+                        appended.add(PlaybackMediaItemFactory.create(
+                                next.get(i),
+                                config.imageDuration()
+                        ));
+                    }
+                    player.addMediaItems(appended);
+                    currentPlayable = new ArrayList<>(next);
+                    activePlaylistSize = next.size();
+                    return;
+                }
+            }
+            // A slot that failed and fell back to the default program stays cooling down
+            // while its own items are unchanged. Editing only its time must not interrupt
+            // the fallback program; editing its content still retries immediately.
+            if (isScheduleCoolingDown(effective.sourceId())
+                    && effective.playlist().equals(failedSchedulePlaylist)) {
+                return;
+            }
+        }
+        // Fresh content: drop any schedule-failure cooldown so admin fixes
+        // (e.g. a corrected live URL) apply immediately.
+        failedScheduleId = null;
+        failedSchedulePlaylist = null;
+        renderConfiguration(config, null);
+    }
+
+    /** True when {@code next} merely appends items after {@code current}. */
+    private static boolean isTailAppend(List<PlaylistItem> current, List<PlaylistItem> next) {
+        if (current.isEmpty() || next.size() <= current.size()) {
+            return false;
+        }
+        return next.subList(0, current.size()).equals(current);
     }
 
     /** Translate a FetchException machine code into a localized user message. */
@@ -576,6 +629,7 @@ public final class MainActivity extends ComponentActivity {
             return false;
         }
         failedScheduleId = activePlaylistSourceId;
+        failedSchedulePlaylist = new ArrayList<>(currentPlayable);
         failedScheduleRetryAtMillis = System.currentTimeMillis() + SCHEDULE_RETRY_COOLDOWN_MS;
         PlaybackConfiguration fallback = new PlaybackConfiguration(
                 config.playlist(),
@@ -630,6 +684,7 @@ public final class MainActivity extends ComponentActivity {
                             && activePlaylistSourceId.equals(failedScheduleId)) {
                         // The retried schedule plays again; clear its cooldown state.
                         failedScheduleId = null;
+                        failedSchedulePlaylist = null;
                     }
                     errorPanel.setVisibility(View.GONE);
                 }

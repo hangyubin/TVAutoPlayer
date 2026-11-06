@@ -9,15 +9,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/chenwei666/TVAutoPlayer/releases/latest"><strong>下载最新版 APK</strong></a>
+  <a href="https://github.com/hangyubin/TVAutoPlayer/releases/latest"><strong>下载最新版 APK</strong></a>
   · <a href="README_EN.md">English</a>
   · <a href="ROADMAP.md">Roadmap</a>
-  · <a href="https://github.com/chenwei666/TVAutoPlayer/issues">反馈问题</a>
+  · <a href="https://github.com/hangyubin/TVAutoPlayer/issues">反馈问题</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/chenwei666/TVAutoPlayer/actions/workflows/android.yml"><img src="https://github.com/chenwei666/TVAutoPlayer/actions/workflows/android.yml/badge.svg" alt="Android CI"></a>
-  <a href="https://github.com/chenwei666/TVAutoPlayer/releases/latest"><img src="https://img.shields.io/github/v/release/chenwei666/TVAutoPlayer?label=release" alt="Release"></a>
+  <a href="https://github.com/hangyubin/TVAutoPlayer/actions/workflows/android.yml"><img src="https://github.com/hangyubin/TVAutoPlayer/actions/workflows/android.yml/badge.svg" alt="Android CI"></a>
+  <a href="https://github.com/hangyubin/TVAutoPlayer/releases/latest"><img src="https://img.shields.io/github/v/release/hangyubin/TVAutoPlayer?label=release" alt="Release"></a>
   <img src="https://img.shields.io/badge/Android-6.0%2B-3DDC84?logo=android&logoColor=white" alt="Android 6+">
   <img src="https://img.shields.io/badge/Privacy-Offline-success" alt="Offline and private">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
@@ -50,7 +50,7 @@ TV Auto Player 是一款面向 **Android TV、电视盒子、门店屏幕和数�
 
 ## 3 分钟开始使用
 
-1. 从 [GitHub Releases](https://github.com/chenwei666/TVAutoPlayer/releases/latest) 下载 APK。
+1. 从 [GitHub Releases](https://github.com/hangyubin/TVAutoPlayer/releases/latest) 下载 APK。
 2. 将 APK 复制到 U 盘，在电视上安装并允许“安装未知应用”。
 3. 首次启动时授予照片和视频读取权限。
 4. 从电视内部存储或 U 盘中按希望的顺序勾选图片和视频。
@@ -61,10 +61,10 @@ TV Auto Player 是一款面向 **Android TV、电视盒子、门店屏幕和数�
 也可以通过 ADB 安装：
 
 ```powershell
-adb install -r .\TVAutoPlayer-v1.5.0-debug.apk
+adb install -r .\TVAutoPlayer-v1.6.0-debug.apk
 ```
 
-当前稳定版：**V1.5.0**
+当前稳定版：**V1.6.0**
 
 > 当前 Release APK 使用 Android Debug 证书签名，适合测试、内网、展厅和门店侧载。正式批量部署前，请使用企业自己的 Release 证书构建并妥善保管签名密钥。
 
@@ -79,8 +79,36 @@ adb install -r .\TVAutoPlayer-v1.5.0-debug.apk
 | 显示模式 | 完整显示或裁切铺满 |
 | 本地记忆 | 保存播放列表、声音、比例和开机播放设置 |
 | 时间段方案 | 多个每日时间段、跨午夜规则、独立列表和约 30 秒边界检查 |
+| 直播源 | HLS/m3u8 直播源管理，可绑定时段定时直播，断流自动回落节目单 |
+| 远程管理 | 内置零依赖 Node.js 服务端与网页后台，局域网内统一管理媒体、节目单、直播源和时段 |
 | 容错 | 媒体被移动、删除或授权失效时明确提示 |
 | 电视体验 | 遥控器操作、沉浸式全屏、播放期间保持屏幕常亮 |
+
+## 直播源与定时节目（服务端管理）
+
+除 U 盘播放外，项目内置一套零依赖的 Node.js 服务端和网页管理后台，可在局域网内统一管理媒体、节目单、直播源和时段计划。设备侧只需填写服务端地址，内容全部由后台控制。
+
+**典型用法：19:00 直播 CCTV1，19:30 自动切回媒体库节目**
+
+1. 在一台常开的电脑或服务器上启动服务端，浏览器打开 `http://服务器IP:8300/`，用默认账户 `admin / admin` 登录并立即修改密码。
+2. 「媒体库」上传图片/视频；「节目单」调整默认播放顺序，作为无时段命中时的内容。
+3. 「直播源」填写名称和 m3u8 地址。添加时服务端会实际拉流检测延迟与码率，不稳定或不可用的源会提示确认。
+4. 「时段」新建 `19:00–19:30`，内容选择 CCTV1 直播源并保存。
+5. 电视端进入设置，把播放模式切到「服务器」，填写服务器 IP（不需要 `http://`）。
+6. 到点自动播放直播，时段结束自动切回默认节目单；后台保存后电视端约 1 秒内生效。
+
+时段规则：
+
+- 30 分钟步进，启用中的时段不可重叠，支持跨午夜（如 `22:00–06:00`）。
+- **一个时段只播一个内容**（一个直播源或一个媒体），可在时段卡片内直接「更换」。
+- 修改时间只改变切换时刻，不会打断正在播放的内容；内容不变时电视端不重建播放器。
+- 直播源播放失败时自动回落默认节目单，并进入 5 分钟冷却，避免每 30 秒反复重试。
+- 直播源地址需在电视端网络内可访问；部分央视频道源有地域或防盗链限制，建议先用 VLC 验证。
+
+服务端部署：
+
+- [Linux 部署与后台使用教程](docs/deployment.md#服务端部署)
+- Windows 用户可直接下载 Release 中的 `TVAutoPlayer-Server-Windows.zip`，解压后双击 `启动服务.bat` 运行，内置 Node.js，无需安装任何环境。
 
 ## 推荐媒体格式
 

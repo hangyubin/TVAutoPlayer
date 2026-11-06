@@ -573,6 +573,7 @@ const server = http.createServer(async (req, res) => {
         { id, startMinute, endMinute, enabled: enabled !== false }, others);
       if (errs.length) return bad(res, errs.join('；'));
       if (!Array.isArray(items) || items.length === 0) return bad(res, '时段节目单不能为空');
+      if (items.length > 1) return bad(res, '一个时段只能有一个内容（一个直播源或一个媒体）');
       for (const it of items) {
         if (it.liveId != null) {
           if (!db.prepare('SELECT 1 FROM live_streams WHERE id = ?').get(it.liveId)) return bad(res, `直播源 ${it.liveId} 不存在`);

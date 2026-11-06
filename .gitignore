@@ -17,3 +17,5 @@ server/data.db
 server/data.db-*
 server/media/
 server/public/uploads/
+# Release binaries are distributed as GitHub Release assets
+dist/*.zip
