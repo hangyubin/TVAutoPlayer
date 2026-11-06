@@ -350,11 +350,12 @@ function uploadOne(file, idx, total, items) {
     const fd = new FormData(); fd.append('file', file);
     const xhr = new XMLHttpRequest();
     queueXhrs.push(xhr);
-    // 大文件放宽超时：每 MB 1 秒，下限 5 分钟、上限 15 分钟
-    xhr.timeout = Math.min(900_000, Math.max(300_000, file.size / 1e6 * 1000));
+    // 大文件放宽超时：每 MB 约 2 秒，下限 5 分钟、上限 60 分钟
+    xhr.timeout = Math.min(3_600_000, Math.max(300_000, file.size / 1e6 * 2000));
     let lastLoaded = 0, lastT = Date.now(), lastRender = 0;
     renderQueue(items);
     state().textContent = `[${idx+1}/${total}] 上传 ${file.name}`;
+    state().classList.remove('err');
     right().textContent = fmtSize(file.size);
 
     xhr.upload.onprogress = (e) => {
@@ -368,6 +369,13 @@ function uploadOne(file, idx, total, items) {
         const speed = dt > 0 ? (e.loaded - lastLoaded) / dt : 0;
         lastLoaded = e.loaded; lastT = now;
         right().textContent = `${Math.round(p)}% · ${fmtSize(e.loaded)}/${fmtSize(e.total)} · ${fmtSpeed(speed)}`;
+        // 传输完成后服务端还要校验哈希（大文件需要几秒），这里给出明确反馈而不是停在 100%
+        if (e.loaded >= e.total) {
+          state().textContent = `[${idx+1}/${total}] 处理中 ${file.name}`;
+          state().classList.remove('err');
+          right().textContent = '服务端校验中…（大文件需要数秒）';
+          fill().classList.add('indeterminate');
+        }
         items[idx].label = `${Math.round(p)}%`;
         // 进度事件非常频繁，150ms 节流一次再重绘队列
         if (now - lastRender < 150) return;
@@ -376,7 +384,10 @@ function uploadOne(file, idx, total, items) {
       }
     };
     xhr.onload = () => {
+      fill().classList.remove('indeterminate');
       const ok = xhr.status >= 200 && xhr.status < 300;
+      let reason = '';
+      if (!ok) { try { reason = (JSON.parse(xhr.responseText) || {}).error || ''; } catch {} }
       let msg = ok ? 'done' : ('err '+xhr.status);
       let label = ok ? '✓' : msg;
       let tagBg = ok ? '#e3f0e8' : '#ffe3e3';
@@ -385,10 +396,29 @@ function uploadOne(file, idx, total, items) {
       if (ok) { try { result = JSON.parse(xhr.responseText); } catch {} }
       items[idx].label = label; items[idx].tagBg = tagBg; items[idx].tagColor = tagColor;
       renderQueue(items);
+      if (!ok) {
+        state().textContent = `失败：${file.name}`;
+        state().classList.add('err');
+        right().textContent = reason || `HTTP ${xhr.status}`;
+      }
       resolve({ ok, result });
     };
-    xhr.onerror = () => { items[idx].label = '✗'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c'; renderQueue(items); resolve({ok:false}); };
-    xhr.ontimeout = () => { items[idx].label = '超时'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c'; renderQueue(items); resolve({ok:false}); };
+    xhr.onerror = () => {
+      fill().classList.remove('indeterminate');
+      state().textContent = `上传中断：${file.name}`;
+      state().classList.add('err');
+      right().textContent = '网络断开、文件超过大小上限或服务端已停止';
+      items[idx].label = '✗'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c';
+      renderQueue(items); resolve({ok:false});
+    };
+    xhr.ontimeout = () => {
+      fill().classList.remove('indeterminate');
+      state().textContent = `上传超时：${file.name}`;
+      state().classList.add('err');
+      right().textContent = '网络过慢，建议改用「扫描媒体文件夹」导入';
+      items[idx].label = '超时'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c';
+      renderQueue(items); resolve({ok:false});
+    };
     xhr.onabort = () => { items[idx].label = '取消'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c'; renderQueue(items); resolve({ok:false}); };
     xhr.open('POST', '/api/media');
     xhr.withCredentials = true;

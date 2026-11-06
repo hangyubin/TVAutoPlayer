@@ -12,7 +12,8 @@ const { buildManifest, validateSchedule, newScheduleId } = require('./manifest')
 
 const PORT = process.env.PORT || 8080;
 const MEDIA_DIR = path.join(__dirname, 'media');
-const MAX_UPLOAD = 2 * 1024 * 1024 * 1024; // 2GB
+const MAX_UPLOAD_GB = Math.max(1, Number(process.env.MAX_UPLOAD_GB) || 8);
+const MAX_UPLOAD = MAX_UPLOAD_GB * 1024 * 1024 * 1024;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // 可选环境变量口令（兼容旧方案）
 
 // ---------- 密码 / 会话 ----------
@@ -236,7 +237,7 @@ function saveUpload(req) {
     };
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_UPLOAD) { fail(new Error('文件过大')); req.destroy(); }
+      if (size > MAX_UPLOAD) { fail(new Error(`文件超过 ${MAX_UPLOAD_GB}GB 上限`)); req.destroy(); }
     });
     req.on('error', fail);
     out.on('error', fail);
@@ -526,6 +527,17 @@ const server = http.createServer(async (req, res) => {
       return ok(res, db.prepare('SELECT * FROM media ORDER BY id DESC').all());
     }
     if (p === '/api/media' && req.method === 'POST') {
+      // Browsers send Content-Length for multipart uploads, so oversize files are rejected
+      // before the whole body is streamed. Without this the connection is reset mid-transfer
+      // and the page just stops at some percentage.
+      const declared = Number(req.headers['content-length'] || 0);
+      if (declared > MAX_UPLOAD) {
+        res.setHeader('Connection', 'close');
+        req.resume();
+        return send(res, 413, {
+          error: `文件超过 ${MAX_UPLOAD_GB}GB 上限。更大的文件请复制到服务端媒体文件夹后点「扫描媒体文件夹」`,
+        });
+      }
       let up = await saveUpload(req);
       const kind = kindOf(up.filename);
       if (!kind) { fs.rmSync(up.tmp, { force: true }); return bad(res, '不支持的格式（仅图片/视频）'); }
@@ -822,7 +834,7 @@ const server = http.createServer(async (req, res) => {
 
     send(res, 404, { error: '接口不存在' });
   } catch (e) {
-    send(res, e.message === '文件过大' ? 413 : 500, { error: e.message });
+    send(res, e.message === '文件过大' || /GB 上限/.test(e.message) ? 413 : 500, { error: e.message });
   }
 });
 
