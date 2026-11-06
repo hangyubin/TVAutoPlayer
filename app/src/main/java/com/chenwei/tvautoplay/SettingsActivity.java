@@ -98,7 +98,7 @@ public final class SettingsActivity extends ComponentActivity {
         Intent result = new Intent();
         result.putExtra(EXTRA_EXIT_PLAYER, true);
         setResult(RESULT_OK, result);
-        finishAffinity();
+        finish();
     }
 
     private void togglePlayMode() {

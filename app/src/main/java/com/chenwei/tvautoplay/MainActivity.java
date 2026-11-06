@@ -111,10 +111,7 @@ public final class MainActivity extends ComponentActivity {
                     Intent data = result.getData();
                     if (result.getResultCode() == RESULT_OK && data != null
                             && data.getBooleanExtra(SettingsActivity.EXTRA_EXIT_PLAYER, false)) {
-                        // The settings screen asked to quit. finishAffinity() alone can leave
-                        // this singleTask activity alive on some TV launchers, reconnect and
-                        // restart playback, so remove the whole task here.
-                        finishAndRemoveTask();
+                        quitApplication();
                         return;
                     }
                     startConfiguredPlayback();
@@ -278,10 +275,15 @@ public final class MainActivity extends ComponentActivity {
                 observed = new RemoteManifestClient(serverUrl).watch(since);
             } catch (RemoteManifestClient.FetchException e) {
                 observed = -1;
+            } catch (Throwable t) {
+                // A request cancelled during shutdown must never reach the thread's
+                // uncaught handler, which would terminate the whole process.
+                observed = -1;
             }
             final long result = observed;
             mainHandler.post(() -> {
                 remoteWatchInFlight = false;
+                if (isFinishing() || isDestroyed()) return;
                 if (!activityStarted || !configStore.isRemoteModeEnabled()) {
                     return;
                 }
@@ -326,12 +328,18 @@ public final class MainActivity extends ComponentActivity {
                         : serverUrl;
                 String detail = translateRemoteError(e.getMessage());
                 String msg = getString(R.string.remote_prefix, detail);
-                mainHandler.post(() -> renderRemoteError(host + ": " + detail, msg));
+                mainHandler.post(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    renderRemoteError(host + ": " + detail, msg);
+                });
+                return;
+            } catch (Throwable t) {
                 return;
             } finally {
                 remoteFetchInFlight = false;
             }
             mainHandler.post(() -> {
+                if (isFinishing() || isDestroyed()) return;
                 if (config == null) {
                     renderRemoteError(
                             serverUrl.isEmpty()
@@ -776,6 +784,19 @@ public final class MainActivity extends ComponentActivity {
             }
         });
         playerView.setPlayer(player);
+    }
+
+    /**
+     * Stops playback and leaves the app. Playback is released before the activity finishes so
+     * the shutdown path does not race a running player, and callbacks posted by background
+     * workers bail out once the activity is finishing.
+     */
+    private void quitApplication() {
+        settingsOpen = false;
+        activityStarted = false;
+        scheduleHandler.removeCallbacksAndMessages(null);
+        releasePlayer();
+        finishAffinity();
     }
 
     private void releasePlayer() {
