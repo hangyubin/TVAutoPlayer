@@ -12,6 +12,11 @@ const { buildManifest, validateSchedule, newScheduleId } = require('./manifest')
 
 const PORT = process.env.PORT || 8080;
 const MEDIA_DIR = path.join(__dirname, 'media');
+// 固定的媒体导入目录：只允许扫描这里，网页端不能指定任意服务器路径。
+// 部署时可用 IMPORT_DIR 环境变量改写，避免在管理界面里随手填路径。
+const IMPORT_DIR = process.env.IMPORT_DIR
+  ? path.resolve(process.env.IMPORT_DIR)
+  : path.join(__dirname, 'import');
 const MAX_UPLOAD = 2 * 1024 * 1024 * 1024; // 2GB
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // 可选环境变量口令（兼容旧方案）
 
@@ -517,19 +522,18 @@ const server = http.createServer(async (req, res) => {
       notifyContentChanged();
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
-    // 扫描服务器上的文件夹，把图片/视频批量导入媒体库（适合已有大量素材、网页上传太慢的场景）
+    // 扫描固定的导入目录，把图片/视频批量导入媒体库（适合已有大量素材、网页上传太慢的场景）
+    if (p === '/api/media/scan' && req.method === 'GET') {
+      return ok(res, { dir: IMPORT_DIR, exists: fs.existsSync(IMPORT_DIR) });
+    }
     if (p === '/api/media/scan' && req.method === 'POST') {
-      const body = await jsonBody(req);
-      const rawDir = String(body.dir || '').trim();
-      const scanDir = path.resolve(rawDir || path.join(__dirname, 'import'));
-      // 默认导入目录不存在时自动创建，留空扫描不会直接报错
-      if (!rawDir) { try { fs.mkdirSync(scanDir, { recursive: true }); } catch { /* 忽略创建失败 */ } }
+      req.resume();
+      const scanDir = IMPORT_DIR;
+      // 导入目录不存在时自动创建，首次扫描不会直接报错
+      try { fs.mkdirSync(scanDir, { recursive: true }); } catch { /* 忽略创建失败 */ }
       let st = null;
       try { st = fs.statSync(scanDir); } catch { /* 目录不存在 */ }
-      if (!st || !st.isDirectory()) return bad(res, `文件夹不存在：${scanDir}`);
-      if (path.resolve(scanDir) === path.resolve(MEDIA_DIR)) {
-        return bad(res, '请选择其他文件夹；媒体目录由系统自动管理');
-      }
+      if (!st || !st.isDirectory()) return bad(res, `导入文件夹不可用：${scanDir}`);
       const MAX_FILES = 200;
       const files = [];
       let truncated = false;

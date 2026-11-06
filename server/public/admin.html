@@ -101,8 +101,8 @@
     <button class="btn sub" id="uploadCancel" style="display:none">取消</button>
   </div>
   <div class="row" style="margin-top:8px">
-    <input id="scanDir" class="grow" placeholder="服务器文件夹路径；留空则扫描服务端 import 目录">
-    <button class="btn sub" id="scanBtn">扫描文件夹</button>
+    <span class="muted grow" id="scanHint">把素材放入服务端导入文件夹后点击扫描</span>
+    <button class="btn sub" id="scanBtn">扫描导入文件夹</button>
   </div>
   <div id="uploadBox">
     <div class="bar-track"><div class="bar-fill indeterminate" id="barFill"></div></div>
@@ -396,12 +396,15 @@ function uploadOne(file, idx, total, items) {
   });
 }
 
+api('GET', '/api/media/scan').then(r => {
+  $('#scanHint').textContent = `导入文件夹：${r.dir}，把素材放进去后点击扫描`;
+}).catch(() => {});
+
 $('#scanBtn').onclick = async () => {
-  const dir = $('#scanDir').value.trim();
   const btn = $('#scanBtn');
   btn.disabled = true; btn.textContent = '扫描中...';
   try {
-    const r = await api('POST', '/api/media/scan', { dir });
+    const r = await api('POST', '/api/media/scan', {});
     let msg = `扫描 ${r.scanned} 个：新增 ${r.added}，重复 ${r.skipped}`;
     if (r.failed) msg += `，失败 ${r.failed}`;
     if (r.truncated) msg += '（单次上限 200 个，请再次扫描）';
@@ -411,7 +414,7 @@ $('#scanBtn').onclick = async () => {
   } catch (e) {
     // api() already toasts the reason.
   } finally {
-    btn.disabled = false; btn.textContent = '扫描文件夹';
+    btn.disabled = false; btn.textContent = '扫描导入文件夹';
   }
 };
 
