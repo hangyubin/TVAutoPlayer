@@ -147,7 +147,7 @@
   </div>
   <p class="muted" style="margin:8px 0">添加后到「时段」页把直播源排进时段节目单；命中时段自动直播，时段结束自动切回节目单。停用的直播源不会下发。</p>
   <table><thead><tr>
-    <th style="width:160px">名称</th><th>地址</th><th style="width:70px">状态</th><th style="width:120px">操作</th>
+    <th style="width:160px">名称</th><th>地址</th><th style="width:70px">状态</th><th style="width:180px">操作</th>
   </tr></thead><tbody id="liveList"></tbody></table>
 </section>
 
@@ -225,17 +225,44 @@ async function loadLive() {
     <td>${esc(s.name)}</td>
     <td title="${esc(s.url)}" style="max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.url)}</td>
     <td><span class="tag ${s.enabled?'img':''}">${s.enabled?'启用':'停用'}</span></td>
-    <td><button class="btn sub" onclick="toggleLive(${s.id},${s.enabled?0:1})">${s.enabled?'停用':'启用'}</button>
+    <td><button class="btn sub" onclick="checkLive(${s.id})">检测</button>
+        <button class="btn sub" onclick="toggleLive(${s.id},${s.enabled?0:1})">${s.enabled?'停用':'启用'}</button>
         <button class="btn warn" onclick="delLive(${s.id})">删除</button></td></tr>`).join('')
     || '<tr><td colspan="4" class="muted">暂无直播源，添加后到「时段」中编排</td></tr>';
 }
-$('#liveAdd').onclick = async () => {
+async function addLive(force) {
   const name = $('#liveName').value.trim(), url = $('#liveUrl').value.trim();
   if (!name || !url) return toast('请填写名称和地址');
-  try {
-    await api('POST', '/api/live', { name, url });
+  if (!force) toast('正在检测地址...');
+  const r = await fetch('/api/live', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, url, force: !!force }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (r.ok) {
     $('#liveName').value = ''; $('#liveUrl').value = '';
-    toast('已添加'); loadLive();
+    const p = data.probe;
+    toast(force ? '已保存（未通过检测）' : `已添加，检测通过（延迟 ${p.latencyMs}ms · ${p.kbps} KB/s）`);
+    loadLive();
+    return;
+  }
+  if (r.status === 400 && data.probeFailed) {
+    if (confirm(`${data.error}\n\n可能是服务器访问受限（电视端未必不能播），或该源速度确实偏慢。\n仍要保存吗？`)) {
+      return addLive(true);
+    }
+    return;
+  }
+  toast(data.error || ('错误 ' + r.status));
+}
+$('#liveAdd').onclick = () => addLive(false);
+window.checkLive = async (id) => {
+  toast('检测中（约 5-10 秒）...');
+  try {
+    const d = await api('GET', '/api/live/' + id + '/check');
+    if (d.ok && d.verdict === 'good') toast(`稳定 ✓ 延迟 ${d.latencyMs}ms · ${d.kbps} KB/s`);
+    else if (d.ok) toast(`可用但偏慢 ⚠ 延迟 ${d.latencyMs}ms · ${d.kbps} KB/s`);
+    else toast('检测失败：' + (d.reason || '未知原因'));
   } catch {}
 };
 window.toggleLive = async (id, enabled) => {
@@ -586,13 +613,18 @@ schList.addEventListener('drop', (e) => {
 
 window.schStartEditTime = (si) => { schTimeEditing = si; renderSchedules(); };
 window.schCancelTime = () => { schTimeEditing = -1; renderSchedules(); };
-window.schSaveTime = (si) => {
+window.schSaveTime = async (si) => {
   const st = +$('#editStart').value, en = +$('#editEnd').value;
   if (st === en) return toast('开始与结束时间不能相同');
-  schedules[si].startMinute = st;
-  schedules[si].endMinute = en;
-  schTimeEditing = -1;
-  renderSchedules();
+  const s = schedules[si];
+  try {
+    await api('PUT', '/api/schedules/' + s.id, {
+      startMinute: st, endMinute: en, enabled: s.enabled, items: s.items,
+    });
+    schTimeEditing = -1;
+    toast('时间已保存');
+    loadSchedules();
+  } catch {}
 };
 window.schAddItem = (si) => {
   const v = $(`#schItemMedia${si}`).value;

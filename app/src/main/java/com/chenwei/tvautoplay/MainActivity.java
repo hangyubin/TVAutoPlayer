@@ -41,6 +41,8 @@ import java.util.concurrent.Executors;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends ComponentActivity {
     private static final long SCHEDULE_CHECK_INTERVAL_MS = 30_000L;
+    /** After a schedule falls back to the default program, wait this long before retrying it. */
+    private static final long SCHEDULE_RETRY_COOLDOWN_MS = 5 * 60_000L;
     /** Retry delay when the long-poll request cannot reach the server. */
     private static final long WATCH_RETRY_DELAY_MS = 5_000L;
     /** Give the manifest fetch time to store the new version before re-arming the watch. */
@@ -78,6 +80,10 @@ public final class MainActivity extends ComponentActivity {
     private int consecutivePlaybackFailures;
     private int activePlaylistSize;
     private String activePlaylistSourceId;
+    /** Schedule whose items all failed and fell back to the default program. */
+    private String failedScheduleId;
+    /** Earliest time the failed schedule may be retried by the 30 s tick. */
+    private long failedScheduleRetryAtMillis;
     private boolean activityStarted;
     private ActivityResultLauncher<Intent> settingsLauncher;
     private ActivityResultLauncher<String[]> permissionLauncher;
@@ -325,6 +331,9 @@ public final class MainActivity extends ComponentActivity {
                     return;
                 }
                 appliedRemoteVersion = version;
+                // Fresh content: drop any schedule-failure cooldown so admin fixes
+                // (e.g. a corrected live URL) apply immediately.
+                failedScheduleId = null;
                 // Tag with the resolved source id so the 30 s schedule-boundary tick
                 // compares like for like instead of restarting playback every tick.
                 renderConfiguration(config, null);
@@ -409,46 +418,15 @@ public final class MainActivity extends ComponentActivity {
         }
 
         showPlayer();
-        releasePlayer();
         consecutivePlaybackFailures = 0;
         activePlaylistSize = playable.size();
-        player = new ExoPlayer.Builder(this)
-                .setAudioAttributes(
-                        new AudioAttributes.Builder()
-                                .setUsage(C.USAGE_MEDIA)
-                                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                                .build(),
-                        true
-                )
-                .build();
-        player.setRepeatMode(Player.REPEAT_MODE_ALL);
+        if (player == null) {
+            createPlayer();
+        }
         player.setVolume(configuration.soundEnabled() ? 1f : 0f);
-        player.addListener(new Player.Listener() {
-            @Override
-            public void onPlayerError(PlaybackException error) {
-                handlePlaybackError(error);
-            }
-
-            @Override
-            public void onPlaybackStateChanged(int playbackState) {
-                if (playbackState == Player.STATE_READY) {
-                    consecutivePlaybackFailures = 0;
-                    errorPanel.setVisibility(View.GONE);
-                }
-            }
-
-            @Override
-            public void onTracksChanged(Tracks tracks) {
-                // Tracks are only published after the renderers have probed the media,
-                // which can happen slightly after STATE_READY. This is the reliable hook.
-                applySavedAudioTrackOverride();
-            }
-        });
-
         playerView.setResizeMode(configuration.scaleMode() == ScaleMode.ZOOM
                 ? AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 : AspectRatioFrameLayout.RESIZE_MODE_FIT);
-        playerView.setPlayer(player);
         List<MediaItem> mediaItems = new ArrayList<>(playable.size());
         for (PlaylistItem item : playable) {
             mediaItems.add(PlaybackMediaItemFactory.create(
@@ -456,7 +434,10 @@ public final class MainActivity extends ComponentActivity {
                     configuration.imageDuration()
             ));
         }
-        player.setMediaItems(mediaItems);
+        // Reuse the player across source switches: swapping the playlist on a warm
+        // instance keeps the video surface alive, avoiding the black flash and full
+        // re-buffer that a release/rebuild cycle caused on every transition.
+        player.setMediaItems(mediaItems, true);
         player.prepare();
         player.play();
         currentPlayable = playable;
@@ -476,6 +457,13 @@ public final class MainActivity extends ComponentActivity {
         );
     }
 
+    /** True while a schedule that just failed is waiting out its retry cooldown. */
+    private boolean isScheduleCoolingDown(String sourceId) {
+        return failedScheduleId != null
+                && failedScheduleId.equals(sourceId)
+                && System.currentTimeMillis() < failedScheduleRetryAtMillis;
+    }
+
     private void checkForScheduleTransition() {
         if (!activityStarted) {
             return;
@@ -487,7 +475,8 @@ public final class MainActivity extends ComponentActivity {
             PlaybackConfiguration remoteConfiguration = lastRemoteConfig;
             if (remoteConfiguration != null) {
                 ResolvedPlaylist effective = resolveEffectivePlaylist(remoteConfiguration);
-                if (!effective.sourceId().equals(activePlaylistSourceId)) {
+                if (!effective.sourceId().equals(activePlaylistSourceId)
+                        && !isScheduleCoolingDown(effective.sourceId())) {
                     renderConfiguration(remoteConfiguration, effective.sourceId());
                 }
             }
@@ -572,9 +561,10 @@ public final class MainActivity extends ComponentActivity {
 
     /**
      * A scheduled slot whose items all failed (typical case: a dead live stream) falls
-     * back to the default program instead of parking on the error panel. The 30 s tick
-     * keeps comparing sourceIds, so the schedule is retried automatically and playback
-     * returns to the live stream as soon as it recovers.
+     * back to the default program instead of parking on the error panel. The failed
+     * schedule then enters a cooldown: the 30 s tick leaves the default program
+     * untouched for a few minutes instead of restarting it on every retry. The next
+     * retry happens after the cooldown, and any new content version clears it at once.
      */
     private boolean fallbackToDefaultProgram() {
         if (!configStore.isRemoteModeEnabled()
@@ -585,6 +575,8 @@ public final class MainActivity extends ComponentActivity {
         if (config == null || config.playlist().isEmpty()) {
             return false;
         }
+        failedScheduleId = activePlaylistSourceId;
+        failedScheduleRetryAtMillis = System.currentTimeMillis() + SCHEDULE_RETRY_COOLDOWN_MS;
         PlaybackConfiguration fallback = new PlaybackConfiguration(
                 config.playlist(),
                 config.autoStartEnabled(),
@@ -607,6 +599,50 @@ public final class MainActivity extends ComponentActivity {
         intent.putExtra(SettingsActivity.EXTRA_CURRENT_AUDIO_TRACK_COUNT,
                 audioTrackEntries().size());
         settingsLauncher.launch(intent);
+    }
+
+    /**
+     * Builds the single ExoPlayer instance reused for the activity lifetime. Source
+     * switches only swap playlists on this warm instance, keeping transitions smooth.
+     */
+    private void createPlayer() {
+        player = new ExoPlayer.Builder(this)
+                .setAudioAttributes(
+                        new AudioAttributes.Builder()
+                                .setUsage(C.USAGE_MEDIA)
+                                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                                .build(),
+                        true
+                )
+                .build();
+        player.setRepeatMode(Player.REPEAT_MODE_ALL);
+        player.addListener(new Player.Listener() {
+            @Override
+            public void onPlayerError(PlaybackException error) {
+                handlePlaybackError(error);
+            }
+
+            @Override
+            public void onPlaybackStateChanged(int playbackState) {
+                if (playbackState == Player.STATE_READY) {
+                    consecutivePlaybackFailures = 0;
+                    if (activePlaylistSourceId != null
+                            && activePlaylistSourceId.equals(failedScheduleId)) {
+                        // The retried schedule plays again; clear its cooldown state.
+                        failedScheduleId = null;
+                    }
+                    errorPanel.setVisibility(View.GONE);
+                }
+            }
+
+            @Override
+            public void onTracksChanged(Tracks tracks) {
+                // Tracks are only published after the renderers have probed the media,
+                // which can happen slightly after STATE_READY. This is the reliable hook.
+                applySavedAudioTrackOverride();
+            }
+        });
+        playerView.setPlayer(player);
     }
 
     private void releasePlayer() {

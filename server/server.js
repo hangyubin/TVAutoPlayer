@@ -125,6 +125,98 @@ const jsonBody = async (req) => {
   catch { throw new Error('请求体不是合法 JSON'); }
 };
 
+// 直播源可用性 + 稳定性探测：
+// 1) 拉取 m3u8 校验 #EXTM3U，记录首包延迟；2) 主播放列表自动跟进首个变体；
+// 3) 下载首个分片（至多 2MB 或 6 秒）估算吞吐 KB/s。
+// verdict: good（可用且速度达标）| slow（可用但偏慢）| fail（不可用）。
+const PROBE_UA = { 'User-Agent': 'TVAutoPlayer-Probe/1.0' };
+const PROBE_SLOW_KBPS = 500;   // 低于 500 KB/s（约 4 Mbps）判定偏慢
+const PROBE_SLOW_LATENCY = 3000;
+
+async function probeFetchText(url, timeoutMs) {
+  const t0 = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: PROBE_UA });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    while (text.length < 65536) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    try { await reader.cancel(); } catch { /* 中断剩余下载 */ }
+    return { text, finalUrl: res.url, latencyMs: Date.now() - t0 };
+  } catch (e) {
+    return { error: e && e.name === 'AbortError' ? '连接超时' : '无法连接' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function probeFetchBytes(url, maxBytes, timeoutMs) {
+  const t0 = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let bytes = 0, statusError = null;
+  try {
+    const res = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: PROBE_UA });
+    if (!res.ok) {
+      statusError = `HTTP ${res.status}`;
+    } else {
+      const reader = res.body.getReader();
+      while (bytes < maxBytes) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.length;
+      }
+      try { await reader.cancel(); } catch { /* 中断剩余下载 */ }
+    }
+  } catch { /* 超时或断连：用已下载字节估算速度 */ }
+  clearTimeout(timer);
+  if (statusError) return { error: statusError };
+  if (bytes === 0) return { error: '无法连接' };
+  const secs = Math.max((Date.now() - t0) / 1000, 0.1);
+  return { bytes, kbps: Math.round(bytes / 1024 / secs) };
+}
+
+async function probeLiveUrl(url) {
+  const first = await probeFetchText(url, 8000);
+  if (first.error) {
+    return { ok: false, verdict: 'fail', reason: first.error === '连接超时' ? '连接超时（8 秒）' : first.error };
+  }
+  if (!first.text.includes('#EXTM3U')) {
+    return { ok: false, verdict: 'fail', reason: '响应不是 m3u8 播放列表' };
+  }
+
+  // 主播放列表：跟进第一个变体流的播放列表
+  let playlistUrl = first.finalUrl, text = first.text;
+  const latencyMs = first.latencyMs;
+  const firstLink = text.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#'));
+  if (text.includes('#EXT-X-STREAM-INF') && firstLink) {
+    const sub = await probeFetchText(new URL(firstLink, first.finalUrl).href, 8000);
+    if (sub.error) return { ok: false, verdict: 'fail', reason: '子播放列表' + sub.error };
+    playlistUrl = sub.finalUrl; text = sub.text;
+  }
+
+  // 媒体播放列表：下载首个分片估算吞吐
+  const seg = text.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#'));
+  let kbps = 0;
+  if (seg) {
+    const r = await probeFetchBytes(new URL(seg, playlistUrl).href, 2 * 1024 * 1024, 6000);
+    if (r.error) return { ok: false, verdict: 'fail', reason: '分片下载失败：' + r.error };
+    kbps = r.kbps;
+  }
+  const slow = (kbps > 0 && kbps < PROBE_SLOW_KBPS) || latencyMs > PROBE_SLOW_LATENCY;
+  return { ok: true, verdict: slow ? 'slow' : 'good', latencyMs, kbps };
+}
+
+const probeSummary = (p) =>
+  p.kbps ? `延迟 ${p.latencyMs}ms · 测速约 ${p.kbps} KB/s` : `延迟 ${p.latencyMs}ms`;
+
 // 流式保存上传：multipart 请求体直接写入临时文件，避免大文件占用内存
 function saveUpload(req) {
   return new Promise((resolve, reject) => {
@@ -516,23 +608,53 @@ const server = http.createServer(async (req, res) => {
       return ok(res, db.prepare('SELECT * FROM live_streams ORDER BY id').all());
     }
     if (p === '/api/live' && req.method === 'POST') {
-      const { name, url: liveUrl } = await jsonBody(req);
+      const { name, url: liveUrl, force } = await jsonBody(req);
       if (!name || !String(name).trim()) return bad(res, '名称不能为空');
       if (!/^https?:\/\/.+/i.test(String(liveUrl || ''))) return bad(res, '地址须为 http(s) 协议');
+      let probeResult = null;
+      if (!force) {
+        const probe = await probeLiveUrl(String(liveUrl).trim());
+        if (!probe.ok || probe.verdict === 'slow') {
+          const why = probe.ok ? '测速偏慢' : probe.reason;
+          return send(res, 400, {
+            error: `直播地址检测未通过：${why}（${probeSummary(probe)}）`,
+            probeFailed: true, reason: why, probe,
+          });
+        }
+        probeResult = probe;
+      }
       const info = db.prepare('INSERT INTO live_streams (name, url) VALUES (?,?)')
         .run(String(name).trim().slice(0, 60), String(liveUrl).trim());
       notifyContentChanged();
-      return ok(res, db.prepare('SELECT * FROM live_streams WHERE id = ?').get(info.lastInsertRowid));
+      const row = db.prepare('SELECT * FROM live_streams WHERE id = ?').get(info.lastInsertRowid);
+      if (probeResult) row.probe = probeResult;
+      return ok(res, row);
+    }
+    m = /^\/api\/live\/(\d+)\/check$/.exec(p);
+    if (m && req.method === 'GET') {
+      const row = db.prepare('SELECT * FROM live_streams WHERE id = ?').get(m[1]);
+      if (!row) return send(res, 404, { error: '直播源不存在' });
+      return ok(res, await probeLiveUrl(row.url));
     }
     m = /^\/api\/live\/(\d+)$/.exec(p);
     if (m && req.method === 'PUT') {
       const row = db.prepare('SELECT * FROM live_streams WHERE id = ?').get(m[1]);
       if (!row) return send(res, 404, { error: '直播源不存在' });
-      const { name, url: liveUrl, enabled } = await jsonBody(req);
+      const { name, url: liveUrl, enabled, force } = await jsonBody(req);
       const newName = name != null ? String(name).trim().slice(0, 60) : row.name;
       const newUrl = liveUrl != null ? String(liveUrl).trim() : row.url;
       if (!newName) return bad(res, '名称不能为空');
       if (!/^https?:\/\/.+/i.test(newUrl)) return bad(res, '地址须为 http(s) 协议');
+      if (!force && newUrl !== row.url) {
+        const probe = await probeLiveUrl(newUrl);
+        if (!probe.ok || probe.verdict === 'slow') {
+          const why = probe.ok ? '测速偏慢' : probe.reason;
+          return send(res, 400, {
+            error: `直播地址检测未通过：${why}（${probeSummary(probe)}）`,
+            probeFailed: true, reason: why, probe,
+          });
+        }
+      }
       db.prepare('UPDATE live_streams SET name = ?, url = ?, enabled = ? WHERE id = ?')
         .run(newName, newUrl, enabled === undefined ? row.enabled : (enabled ? 1 : 0), row.id);
       notifyContentChanged();
