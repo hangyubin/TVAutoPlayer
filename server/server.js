@@ -12,11 +12,6 @@ const { buildManifest, validateSchedule, newScheduleId } = require('./manifest')
 
 const PORT = process.env.PORT || 8080;
 const MEDIA_DIR = path.join(__dirname, 'media');
-// 固定的媒体导入目录：只允许扫描这里，网页端不能指定任意服务器路径。
-// 部署时可用 IMPORT_DIR 环境变量改写，避免在管理界面里随手填路径。
-const IMPORT_DIR = process.env.IMPORT_DIR
-  ? path.resolve(process.env.IMPORT_DIR)
-  : path.join(__dirname, 'import');
 const MAX_UPLOAD = 2 * 1024 * 1024 * 1024; // 2GB
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // 可选环境变量口令（兼容旧方案）
 
@@ -522,21 +517,21 @@ const server = http.createServer(async (req, res) => {
       notifyContentChanged();
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
-    // 扫描固定的导入目录，把图片/视频批量导入媒体库（适合已有大量素材、网页上传太慢的场景）
+    // 扫描媒体目录：把直接拷进去的图片/视频批量入库（与网页上传共用同一个目录）
     if (p === '/api/media/scan' && req.method === 'GET') {
-      return ok(res, { dir: IMPORT_DIR, exists: fs.existsSync(IMPORT_DIR) });
+      return ok(res, { dir: MEDIA_DIR });
     }
     if (p === '/api/media/scan' && req.method === 'POST') {
       req.resume();
-      const scanDir = IMPORT_DIR;
-      // 导入目录不存在时自动创建，首次扫描不会直接报错
-      try { fs.mkdirSync(scanDir, { recursive: true }); } catch { /* 忽略创建失败 */ }
+      const scanDir = MEDIA_DIR;
       let st = null;
       try { st = fs.statSync(scanDir); } catch { /* 目录不存在 */ }
-      if (!st || !st.isDirectory()) return bad(res, `导入文件夹不可用：${scanDir}`);
+      if (!st || !st.isDirectory()) return bad(res, `媒体文件夹不可用：${scanDir}`);
       const MAX_FILES = 200;
       const files = [];
       let truncated = false;
+      let already = 0;
+      const known = db.prepare('SELECT 1 FROM media WHERE filename = ?');
       const walk = (dir, depth) => {
         if (truncated || depth > 5) return;
         let entries;
@@ -547,6 +542,8 @@ const server = http.createServer(async (req, res) => {
           const full = path.join(dir, e.name);
           if (e.isDirectory()) { walk(full, depth + 1); continue; }
           if (!e.isFile() || !kindOf(e.name)) continue;
+          // Files already registered by a previous upload or scan are skipped cheaply.
+          if (path.dirname(path.resolve(full)) === scanDir && known.get(e.name)) { already++; continue; }
           files.push(full);
           if (files.length >= MAX_FILES) { truncated = true; return; }
         }
@@ -557,35 +554,51 @@ const server = http.createServer(async (req, res) => {
       const errors = [];
       for (const file of files) {
         try {
-          const kind = kindOf(file);
+          const name = path.basename(file);
+          const kind = kindOf(name);
           const statSize = fs.statSync(file).size;
-          if (statSize <= 0) { failed++; errors.push(`${path.basename(file)}: 空文件`); continue; }
-          const sha256 = await sha256OfRange(file, 0, statSize - 1);
-          if (db.prepare('SELECT 1 FROM media WHERE sha256 = ? AND kind = ?').get(sha256, kind)) {
-            skipped++;
-            continue;
-          }
-          let source = file, srcStart = 0, srcEnd = statSize - 1, finalSize = statSize;
-          let tmpRemux = null;
-          if (kind === 'VIDEO' && path.extname(file).toLowerCase() === '.mkv' && isLegacyMkv(file, 0)) {
+          if (statSize <= 0) { failed++; errors.push(`${name}: 空文件`); continue; }
+          let sha256 = await sha256OfRange(file, 0, statSize - 1);
+          let finalSize = statSize;
+          let source = file, srcStart = 0, srcEnd = statSize - 1;
+          let fromTemp = false;
+          if (kind === 'VIDEO' && path.extname(name).toLowerCase() === '.mkv' && isLegacyMkv(file, 0)) {
             if (!ffmpegAvailable()) {
               failed++;
-              errors.push(`${path.basename(file)}: 旧封装 MKV，请先安装 ffmpeg`);
+              errors.push(`${name}: 旧封装 MKV，请先安装 ffmpeg`);
               continue;
             }
-            const rr = await remuxMkv({ tmp: file, start: 0, end: statSize - 1, filename: path.basename(file) });
-            if (rr.error) { failed++; errors.push(`${path.basename(file)}: ${rr.error}`); continue; }
+            const rr = await remuxMkv({ tmp: file, start: 0, end: statSize - 1, filename: name });
+            if (rr.error) { failed++; errors.push(`${name}: ${rr.error}`); continue; }
             source = rr.up.tmp;
             srcStart = rr.up.start;
             srcEnd = rr.up.end;
             finalSize = rr.up.size;
-            tmpRemux = rr.up.tmp;
+            sha256 = await sha256OfRange(source, srcStart, srcEnd);
+            fromTemp = true;
           }
-          const storeName = `${sha256.slice(0, 16)}${path.extname(file).toLowerCase()}`;
-          await copyRange(source, srcStart, srcEnd, path.join(MEDIA_DIR, storeName));
-          if (tmpRemux) fs.rmSync(tmpRemux, { force: true });
+          const dup = db.prepare('SELECT filename FROM media WHERE sha256 = ? AND kind = ?')
+            .get(sha256, kind);
+          if (dup) {
+            if (fromTemp) fs.rmSync(source, { force: true });
+            skipped++;
+            errors.push(`${name}: 与已入库的 ${dup.filename} 内容重复，原文件已保留`);
+            continue;
+          }
+          const storeName = `${sha256.slice(0, 16)}${path.extname(name).toLowerCase()}`;
+          const target = path.join(scanDir, storeName);
+          if (fs.existsSync(target)) fs.rmSync(target, { force: true });
+          if (fromTemp) {
+            // Rename inside the media folder would drop the source, so materialize first.
+            fs.rmSync(file, { force: true });
+            await copyRange(source, srcStart, srcEnd, target);
+            fs.rmSync(source, { force: true });
+          } else if (path.resolve(file) !== path.resolve(target)) {
+            // Same folder rename keeps disk usage unchanged.
+            fs.renameSync(file, target);
+          }
           db.prepare('INSERT INTO media (filename, orig_name, sha256, kind, size) VALUES (?,?,?,?,?)')
-            .run(storeName, path.basename(file).slice(0, 120), sha256, kind, finalSize);
+            .run(storeName, name.slice(0, 120), sha256, kind, finalSize);
           added++;
         } catch (e) {
           failed++;
@@ -595,7 +608,7 @@ const server = http.createServer(async (req, res) => {
       if (added) notifyContentChanged();
       console.log(`[scan] ${scanDir} 扫描 ${files.length} 个，新增 ${added}，重复 ${skipped}，失败 ${failed}`);
       return ok(res, {
-        dir: scanDir, scanned: files.length, added, skipped, failed, truncated,
+        dir: scanDir, scanned: files.length, already, added, skipped, failed, truncated,
         errors: errors.slice(0, 10),
       });
     }
