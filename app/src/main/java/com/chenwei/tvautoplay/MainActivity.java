@@ -161,7 +161,12 @@ public final class MainActivity extends ComponentActivity {
     protected void onStop() {
         activityStarted = false;
         scheduleHandler.removeCallbacks(scheduleCheck);
-        releasePlayer();
+        // Opening the settings screen is a temporary navigation, not an app exit.
+        // Keep the player alive so returning resumes from the current position
+        // instead of restarting from the beginning.
+        if (!settingsOpen) {
+            releasePlayer();
+        }
         super.onStop();
     }
 
