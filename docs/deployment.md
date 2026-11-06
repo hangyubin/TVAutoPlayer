@@ -2,7 +2,7 @@
 
 ## 测试部署
 
-1. 从 [GitHub Release v1.6.1](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.6.1) 下载 `TVAutoPlayer-v1.6.1-debug.apk` 并复制到 U 盘。
+1. 从 [GitHub Release v1.6.2](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.6.2) 下载 `TVAutoPlayer-v1.6.2-debug.apk` 并复制到 U 盘。
 2. 电视开启“允许安装未知来源应用”。
 3. 安装 APK，首次打开后授予照片和视频只读权限，在内置媒体库中选择图片或视频。
 4. 在电视的应用/电池/后台管理中允许本应用自启动和后台运行。
