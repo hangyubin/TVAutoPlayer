@@ -147,10 +147,10 @@
     <string name="usb_status_empty">未找到 U 盘目录：请把文件放到 U 盘根目录的 TVAutoPlayer 文件夹。</string>
     <string name="no_media_in_usb">U 盘模式没有找到媒体文件。请把图片或视频放入 U 盘根目录的 TVAutoPlayer 文件夹，重新插入 U 盘后会自动播放。</string>
     <string name="no_media_remote">服务器节目单为空。请在管理后台把媒体加入默认节目单；若只配置了时段，到达时段开始时间后会自动播放。</string>
-    <string name="audio_track_default">音轨：跟随默认</string>
+    <string name="audio_track_default">音轨：自动（中文优先）</string>
     <string name="audio_track_button_value">音轨：%1$d</string>
-    <string name="audio_track_description">每次播放新视频自动应用所选音轨。选跟随默认保持视频原音轨，或指定音轨序号。</string>
+    <string name="audio_track_description">每次播放新视频自动应用所选音轨。选自动时优先中文音轨，也可以指定音轨序号。</string>
     <string name="audio_track_dialog_title">选择播放音轨</string>
-    <string name="audio_track_option_default">跟随视频默认音轨</string>
+    <string name="audio_track_option_default">自动（优先中文音轨）</string>
     <string name="audio_track_option_n">音轨 %1$d</string>
 </resources>

@@ -147,10 +147,10 @@
     <string name="usb_status_empty">USB folder not found: put files in the TVAutoPlayer folder at the USB root.</string>
     <string name="no_media_in_usb">No media found in USB mode. Put images or videos into the TVAutoPlayer folder at the USB root; playback starts automatically after the drive is reinserted.</string>
     <string name="no_media_remote">The server program is empty. Add media to the default program in the admin console; if only schedules are configured, playback starts automatically when a schedule begins.</string>
-    <string name="audio_track_default">Audio track: default</string>
+    <string name="audio_track_default">Audio: auto (system language)</string>
     <string name="audio_track_button_value">Audio track: %1$d</string>
-    <string name="audio_track_description">Applied automatically on each new video. Pick follow for the default audio, or pick a specific track number.</string>
+    <string name="audio_track_description">Applied automatically on each new video. Auto prefers the system language track; or pick a specific track number.</string>
     <string name="audio_track_dialog_title">Select audio track</string>
-    <string name="audio_track_option_default">Video default track</string>
+    <string name="audio_track_option_default">Auto (prefer system language track)</string>
     <string name="audio_track_option_n">Track %1$d</string>
 </resources>

@@ -34,6 +34,7 @@ import androidx.media3.ui.PlayerView;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -801,6 +802,13 @@ public final class MainActivity extends ComponentActivity {
                 )
                 .build();
         player.setRepeatMode(Player.REPEAT_MODE_ALL);
+        // Container default flags are unreliable after remuxing, so pick the default
+        // audio track by language: the TV's system language first, then the container
+        // default flag, then the first track. A manual track pick always wins.
+        player.setTrackSelectionParameters(
+                player.getTrackSelectionParameters().buildUpon()
+                        .setPreferredAudioLanguage(Locale.getDefault().getLanguage())
+                        .build());
         player.addListener(new Player.Listener() {
             @Override
             public void onPlayerError(PlaybackException error) {
