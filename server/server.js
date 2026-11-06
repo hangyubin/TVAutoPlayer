@@ -110,6 +110,22 @@ const contentVersionOf = (manifest) => {
   return value === 0 ? 1 : value;
 };
 
+// 删除媒体或直播源时同步清理时段引用；时段因此变空时自动停用，
+// 否则会留下一个「启用但没有任何内容」的时段：终端静默跳过，后台也难察觉。
+function detachFromSchedules(matches) {
+  let disabled = 0;
+  for (const s of db.prepare('SELECT id, items_json, enabled FROM schedules').all()) {
+    const items = JSON.parse(s.items_json);
+    const kept = items.filter((it) => !matches(it));
+    if (kept.length === items.length) continue;
+    const enabled = kept.length === 0 ? 0 : s.enabled;
+    db.prepare('UPDATE schedules SET items_json = ?, enabled = ? WHERE id = ?')
+      .run(JSON.stringify(kept), enabled, s.id);
+    if (kept.length === 0) disabled++;
+  }
+  return disabled;
+}
+
 // ---------- 长轮询通知 ----------
 // 后台保存后立即唤醒挂起的 /api/watch 请求，终端无需等待固定轮询周期
 const WATCH_HOLD_MS = 25000;
@@ -218,12 +234,15 @@ async function probeLiveUrl(url) {
 const probeSummary = (p) =>
   p.kbps ? `延迟 ${p.latencyMs}ms · 测速约 ${p.kbps} KB/s` : `延迟 ${p.latencyMs}ms`;
 
+// 客户端请求体问题返回 400，避免把用户输入错误报成服务端 500
+const clientError = (msg) => Object.assign(new Error(msg), { status: 400 });
+
 // 流式保存上传：multipart 请求体直接写入临时文件，避免大文件占用内存
 function saveUpload(req) {
   return new Promise((resolve, reject) => {
     const contentType = req.headers['content-type'] || '';
     const m = /boundary=(?:"([^"]+)"|([^\s;]+))/.exec(contentType);
-    if (!m) { req.resume(); return reject(new Error('缺少 boundary')); }
+    if (!m) { req.resume(); return reject(clientError('缺少 boundary')); }
     const boundary = `--${m[1] || m[2]}`;
     const tmp = path.join(MEDIA_DIR, `.upload-${crypto.randomUUID()}.tmp`);
     const out = fs.createWriteStream(tmp);
@@ -237,7 +256,7 @@ function saveUpload(req) {
     };
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_UPLOAD) { fail(new Error(`文件超过 ${MAX_UPLOAD_GB}GB 上限`)); req.destroy(); }
+      if (size > MAX_UPLOAD) { fail(Object.assign(new Error(`文件超过 ${MAX_UPLOAD_GB}GB 上限`), { status: 413 })); req.destroy(); }
     });
     req.on('error', fail);
     out.on('error', fail);
@@ -260,21 +279,21 @@ function locateMultipartFile(tmp, totalSize, boundary) {
   try {
     const head = Buffer.alloc(Math.min(totalSize, 64 * 1024));
     fs.readSync(fd, head, 0, head.length, 0);
-    if (head.indexOf(boundary) !== 0) throw new Error('multipart 格式错误');
+    if (head.indexOf(boundary) !== 0) throw clientError('multipart 格式错误');
     const headerEnd = head.indexOf('\r\n\r\n');
-    if (headerEnd < 0) throw new Error('multipart 格式错误');
+    if (headerEnd < 0) throw clientError('multipart 格式错误');
     const header = head.slice(0, headerEnd).toString('utf8');
     const fm = /filename="([^"]*)"/.exec(header);
-    if (!fm) throw new Error('缺少文件名');
+    if (!fm) throw clientError('缺少文件名');
     const start = headerEnd + 4;
     // 结尾形如 \r\n--boundary--\r\n（部分客户端省略末尾换行）
     const tailLen = Math.max(0, Math.min(totalSize - start, boundary.length + 16));
     const tail = Buffer.alloc(tailLen);
     fs.readSync(fd, tail, 0, tailLen, totalSize - tailLen);
     const idx = tail.indexOf('\r\n' + boundary);
-    if (idx < 0) throw new Error('multipart 结尾格式错误');
+    if (idx < 0) throw clientError('multipart 结尾格式错误');
     const end = totalSize - tailLen + idx - 1;
-    if (end < start) throw new Error('上传内容为空');
+    if (end < start) throw clientError('上传内容为空');
     return {
       filename: path.basename(fm[1]), tmp,
       start, end, size: end - start + 1,
@@ -617,6 +636,9 @@ const server = http.createServer(async (req, res) => {
       let added = 0, skipped = 0, failed = 0;
       const errors = [];
       for (const file of files) {
+        // 哈希大文件是同步 CPU 操作；每处理完一个文件就让出事件循环一次，
+        // 保证扫描期间电视端的 /api/manifest 与 /api/watch 仍能正常响应。
+        await new Promise((resolve) => setImmediate(resolve));
         try {
           const name = path.basename(file);
           const kind = kindOf(name);
@@ -681,13 +703,10 @@ const server = http.createServer(async (req, res) => {
       const row = db.prepare('SELECT * FROM media WHERE id = ?').get(m[1]);
       if (!row) return send(res, 404, { error: '媒体不存在' });
       db.prepare('DELETE FROM media WHERE id = ?').run(row.id);
-      for (const s of db.prepare('SELECT id, items_json FROM schedules').all()) {
-        const items = JSON.parse(s.items_json).filter(it => it.mediaId !== row.id);
-        db.prepare('UPDATE schedules SET items_json = ? WHERE id = ?').run(JSON.stringify(items), s.id);
-      }
+      const disabledSchedules = detachFromSchedules((it) => it.mediaId === row.id);
       fs.rmSync(path.join(MEDIA_DIR, row.filename), { force: true });
       notifyContentChanged();
-      return ok(res);
+      return ok(res, { disabledSchedules });
     }
 
     // ----- 默认节目单 -----
@@ -731,16 +750,18 @@ const server = http.createServer(async (req, res) => {
       const errs = validateSchedule(
         { id, startMinute, endMinute, enabled: enabled !== false }, others);
       if (errs.length) return bad(res, errs.join('；'));
-      if (!Array.isArray(items) || items.length === 0) return bad(res, '时段节目单不能为空');
-      if (items.length > 1) return bad(res, '一个时段只能有一个内容（一个直播源或一个媒体）');
-      for (const it of items) {
+      const list = Array.isArray(items) ? items : [];
+      // 停用状态允许留空，便于把已经没有内容的时段先关掉。
+      if (list.length === 0 && enabled !== false) return bad(res, '时段节目单不能为空');
+      if (list.length > 1) return bad(res, '一个时段只能有一个内容（一个直播源或一个媒体）');
+      for (const it of list) {
         if (it.liveId != null) {
           if (!db.prepare('SELECT 1 FROM live_streams WHERE id = ?').get(it.liveId)) return bad(res, `直播源 ${it.liveId} 不存在`);
         } else if (!db.prepare('SELECT 1 FROM media WHERE id = ?').get(it.mediaId)) {
           return bad(res, `媒体 ${it.mediaId} 不存在`);
         }
       }
-      const json = JSON.stringify(items.map(it => it.liveId != null
+      const json = JSON.stringify(list.map(it => it.liveId != null
         ? { liveId: it.liveId }
         : {
             mediaId: it.mediaId,
@@ -824,17 +845,14 @@ const server = http.createServer(async (req, res) => {
       const row = db.prepare('SELECT * FROM live_streams WHERE id = ?').get(m[1]);
       if (!row) return send(res, 404, { error: '直播源不存在' });
       db.prepare('DELETE FROM live_streams WHERE id = ?').run(row.id);
-      for (const s of db.prepare('SELECT id, items_json FROM schedules').all()) {
-        const items = JSON.parse(s.items_json).filter(it => it.liveId !== row.id);
-        db.prepare('UPDATE schedules SET items_json = ? WHERE id = ?').run(JSON.stringify(items), s.id);
-      }
+      const disabledSchedules = detachFromSchedules((it) => it.liveId === row.id);
       notifyContentChanged();
-      return ok(res);
+      return ok(res, { disabledSchedules });
     }
 
     send(res, 404, { error: '接口不存在' });
   } catch (e) {
-    send(res, e.message === '文件过大' || /GB 上限/.test(e.message) ? 413 : 500, { error: e.message });
+    send(res, e.status || (e.message === '文件过大' || /GB 上限/.test(e.message) ? 413 : 500), { error: e.message });
   }
 });
 

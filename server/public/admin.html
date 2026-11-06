@@ -233,6 +233,10 @@ async function loadLive() {
         <button class="btn sub" onclick="toggleLive(${s.id},${s.enabled?0:1})">${s.enabled?'停用':'启用'}</button>
         <button class="btn warn" onclick="delLive(${s.id})">删除</button></td></tr>`).join('')
     || '<tr><td colspan="4" class="muted">暂无直播源，添加后到「时段」中编排</td></tr>';
+  // 时段页的「添加」下拉同时列出媒体与直播源；直播源异步加载完后必须刷新它，
+  // 否则首次进入时段页时下拉里只有媒体，看不到直播源。
+  const schSelect = $('#schMedia');
+  if (schSelect) schSelect.innerHTML = schedOptionsHtml();
 }
 async function addLive(force) {
   const name = $('#liveName').value.trim(), url = $('#liveUrl').value.trim();
@@ -274,7 +278,10 @@ window.toggleLive = async (id, enabled) => {
   toast(enabled ? '已启用' : '已停用'); loadLive();
 };
 window.delLive = async (id) => {
-  if (confirm('删除该直播源？引用它的时段会自动移除该项。')) { await api('DELETE', '/api/live/' + id); toast('已删除'); loadLive(); }
+  if (!confirm('删除该直播源？引用它的时段会自动移除该项。')) return;
+  const r = await api('DELETE', '/api/live/' + id);
+  toast(r.disabledSchedules ? `已删除，${r.disabledSchedules} 个时段已自动停用` : '已删除');
+  loadLive();
 };
 const liveNameOf = (id) => {
   const s = lives.find(x => x.id === id);
@@ -285,6 +292,7 @@ const itemNameOf = (it) => it.liveId != null ? liveNameOf(it.liveId) : mediaName
 // ----- 媒体库 -----
 async function loadMedia() {
   media = await api('GET', '/api/media');
+  loadScanHint();
   $('#mediaList').innerHTML = media.map(m => {
     const url = 'media/' + m.filename;
     const thumb = m.kind === 'IMAGE'
@@ -328,7 +336,12 @@ window.closePreview = () => {
   p.onclick = null;
 };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePreview(); });
-window.delMedia = async (id) => { if (confirm('删除该媒体？引用它的节目单会自动移除该项。')) { await api('DELETE', '/api/media/' + id); toast('已删除'); load(); } };
+window.delMedia = async (id) => {
+  if (!confirm('删除该媒体？引用它的节目单会自动移除该项。')) return;
+  const r = await api('DELETE', '/api/media/' + id);
+  toast(r.disabledSchedules ? `已删除，${r.disabledSchedules} 个时段已自动停用` : '已删除');
+  load();
+};
 const fmtSize = (n) => n > 1048576 ? (n/1048576).toFixed(1)+' MB' : Math.ceil(n/1024)+' KB';
 const fmtSpeed = (b) => b > 1048576 ? (b/1048576).toFixed(1)+' MB/s' : Math.ceil(b/1024)+' KB/s';
 let currentXhr = null, queueAbort = false, queueXhrs = [];
@@ -426,9 +439,13 @@ function uploadOne(file, idx, total, items) {
   });
 }
 
-api('GET', '/api/media/scan').then(r => {
-  $('#scanHint').textContent = `媒体文件夹：${r.dir}，把素材拷进去后点击扫描`;
-}).catch(() => {});
+// 登录后才请求媒体目录（未登录直接调用会触发「未登录」提示）
+function loadScanHint() {
+  fetch('/api/media/scan', { credentials: 'same-origin' })
+    .then(r => (r.ok ? r.json() : null))
+    .then(r => { if (r && r.dir) $('#scanHint').textContent = `媒体文件夹：${r.dir}，把素材拷进去后点击扫描`; })
+    .catch(() => {});
+}
 
 $('#scanBtn').onclick = async () => {
   const btn = $('#scanBtn');
@@ -723,7 +740,18 @@ window.schReplaceItem = (si) => {
   toast('已替换，点「保存」生效');
 };
 window.schRmItem = (si, i) => { schedules[si].items.splice(i, 1); renderSchedules(); };
-window.toggleSch = (si) => { schedules[si].enabled = !schedules[si].enabled; renderSchedules(); };
+// 启用/停用立即生效（与「修改时间」一致），避免切页签后状态丢失
+window.toggleSch = async (si) => {
+  const s = schedules[si];
+  const next = !s.enabled;
+  try {
+    await api('PUT', '/api/schedules/' + s.id, {
+      startMinute: s.startMinute, endMinute: s.endMinute, enabled: next, items: s.items,
+    });
+    toast(next ? '时段已启用' : '时段已停用');
+    loadSchedules();
+  } catch {}
+};
 window.saveSch = async (si) => {
   const s = schedules[si];
   if (!s.items.length) return toast('时段节目单不能为空');

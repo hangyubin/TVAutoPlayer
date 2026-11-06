@@ -47,6 +47,8 @@ public final class MainActivity extends ComponentActivity {
     private static final long WATCH_RETRY_DELAY_MS = 5_000L;
     /** Give the manifest fetch time to store the new version before re-arming the watch. */
     private static final long WATCH_SETTLE_MS = 1_500L;
+    /** An unattended TV must recover on its own after a transient playback/network failure. */
+    private static final long ERROR_RETRY_INTERVAL_MS = 60_000L;
 
     private final Handler scheduleHandler = new Handler(Looper.getMainLooper());
     private final Runnable scheduleCheck = this::checkForScheduleTransition;
@@ -96,6 +98,8 @@ public final class MainActivity extends ComponentActivity {
     /** Last remote configuration received; used for 30 s schedule-boundary checks. */
     private PlaybackConfiguration lastRemoteConfig;
     private List<PlaylistItem> currentPlayable = new ArrayList<>();
+    /** Next automatic retry while the error panel is showing; 0 = nothing pending. */
+    private long errorRetryAtMillis;
     /** Resume point of the default program, saved when a schedule takes over. */
     private int defaultResumeIndex = -1;
     private long defaultResumePositionMs;
@@ -115,6 +119,11 @@ public final class MainActivity extends ComponentActivity {
                         return;
                     }
                     startConfiguredPlayback();
+                    // Audio track, volume and aspect ratio can only be changed from the
+                    // settings screen; the content itself did not change, so apply them here
+                    // directly instead of waiting for the next playlist render.
+                    applySavedAudioTrackOverride();
+                    applyDisplayPreferences(configStore.load());
                 }
         );
         permissionLauncher = registerForActivityResult(
@@ -538,10 +547,7 @@ public final class MainActivity extends ComponentActivity {
         if (player == null) {
             createPlayer();
         }
-        player.setVolume(configuration.soundEnabled() ? 1f : 0f);
-        playerView.setResizeMode(configuration.scaleMode() == ScaleMode.ZOOM
-                ? AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                : AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        applyDisplayPreferences(configuration);
         List<MediaItem> mediaItems = new ArrayList<>(playable.size());
         for (PlaylistItem item : playable) {
             mediaItems.add(PlaybackMediaItemFactory.create(
@@ -638,6 +644,11 @@ public final class MainActivity extends ComponentActivity {
         if (!activityStarted) {
             return;
         }
+        if (errorRetryAtMillis > 0
+                && errorPanel.getVisibility() == View.VISIBLE
+                && System.currentTimeMillis() >= errorRetryAtMillis) {
+            retryPlayback();
+        }
         // Remote mode: refresh the manifest AND re-evaluate the schedule boundary.
         // The config cached from the last successful fetch carries the server-side
         // schedules, so a 30 s tick can switch programs without a new publish.
@@ -663,6 +674,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void retryPlayback() {
+        errorRetryAtMillis = 0;
         if (player == null) {
             startConfiguredPlayback();
             return;
@@ -708,6 +720,8 @@ public final class MainActivity extends ComponentActivity {
     private void showPlaybackError(PlaybackException error) {
         errorMessage.setText(getString(R.string.playback_error_detail, error.getErrorCodeName()));
         errorPanel.setVisibility(View.VISIBLE);
+        // Nobody is watching the TV: retry on our own instead of waiting for a remote press.
+        errorRetryAtMillis = System.currentTimeMillis() + ERROR_RETRY_INTERVAL_MS;
         findViewById(R.id.retry_button).requestFocus();
     }
 
@@ -797,6 +811,7 @@ public final class MainActivity extends ComponentActivity {
             public void onPlaybackStateChanged(int playbackState) {
                 if (playbackState == Player.STATE_READY) {
                     consecutivePlaybackFailures = 0;
+                    errorRetryAtMillis = 0;
                     if (activePlaylistSourceId != null
                             && activePlaylistSourceId.equals(failedScheduleId)) {
                         // The retried schedule plays again; clear its cooldown state.
@@ -893,6 +908,18 @@ public final class MainActivity extends ComponentActivity {
                         .clearOverrides()
                         .build());
         configStore.setPreferredAudioTrackIndex(-1);
+    }
+
+    /**
+     * Volume and aspect ratio are global preferences, so they are applied directly on the live
+     * player instead of waiting for the next playlist render.
+     */
+    private void applyDisplayPreferences(PlaybackConfiguration configuration) {
+        if (player == null) return;
+        player.setVolume(configuration.soundEnabled() ? 1f : 0f);
+        playerView.setResizeMode(configuration.scaleMode() == ScaleMode.ZOOM
+                ? AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                : AspectRatioFrameLayout.RESIZE_MODE_FIT);
     }
 
     /** Applies the previously chosen audio track whenever the track list becomes available. */
