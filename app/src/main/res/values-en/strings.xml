@@ -151,6 +151,6 @@
     <string name="audio_track_button_value">Audio track: %1$d</string>
     <string name="audio_track_description">Applied automatically on each new video. Pick follow for the default audio, or pick a specific track number.</string>
     <string name="audio_track_dialog_title">Select audio track</string>
-    <string name="audio_track_option_default">Follow default</string>
+    <string name="audio_track_option_default">Video default track</string>
     <string name="audio_track_option_n">Track %1$d</string>
 </resources>

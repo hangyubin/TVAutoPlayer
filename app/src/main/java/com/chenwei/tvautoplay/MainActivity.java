@@ -181,7 +181,33 @@ public final class MainActivity extends ComponentActivity {
             resetAudioTrackToDefault();
             return true;
         }
+        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && player != null) {
+            player.setPlayWhenReady(!player.getPlayWhenReady());
+            return true;
+        }
+        // Remotes have no touch input: any directional key brings back the auto-hidden
+        // controls and hands focus to the player so the buttons can be navigated.
+        if (playerView != null && !playerView.isControllerFullyVisible()
+                && isPlaybackControlKey(keyCode)) {
+            playerView.showController();
+            playerView.requestFocus();
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
+    }
+
+    private static boolean isPlaybackControlKey(int keyCode) {
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_DPAD_UP:
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+                return true;
+            default:
+                return false;
+        }
     }
 
     @Override
@@ -783,6 +809,8 @@ public final class MainActivity extends ComponentActivity {
                 applySavedAudioTrackOverride();
             }
         });
+        playerView.setFocusable(true);
+        playerView.setFocusableInTouchMode(true);
         playerView.setPlayer(player);
     }
 

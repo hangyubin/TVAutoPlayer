@@ -11,4 +11,20 @@
         <item name="android:navigationBarColor">@color/background</item>
         <item name="android:statusBarColor">@color/background</item>
     </style>
+
+    <!--
+      Dialogs must not rely on the TV ROM palette: several ROMs draw the dialog
+      surface light while the app text stays white, which makes the content
+      unreadable. Every color is pinned here.
+    -->
+    <style name="TvAlertDialogTheme" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_background</item>
+        <item name="android:colorBackground">#FF16223A</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="android:textColorAlertDialogListItem">@color/text_primary</item>
+        <item name="android:colorAccent">@color/primary</item>
+        <item name="android:colorControlActivated">@color/primary</item>
+        <item name="android:colorControlNormal">@color/text_secondary</item>
+    </style>
 </resources>

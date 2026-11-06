@@ -238,7 +238,7 @@ public final class SettingsActivity extends ComponentActivity {
         input.setBackgroundResource(R.drawable.input_background);
         int pad = (int) (getResources().getDisplayMetrics().density * 12 + 0.5f);
         input.setPadding(pad, pad, pad, pad);
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, R.style.TvAlertDialogTheme)
                 .setTitle(R.string.server_url_dialog_title)
                 .setView(input)
                 .setNegativeButton(R.string.cancel, null)
@@ -268,7 +268,7 @@ public final class SettingsActivity extends ComponentActivity {
             labels[i + 1] = getString(R.string.audio_track_option_n, i + 1);
             if (saved == i) checkedIndex = i + 1;
         }
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this, R.style.TvAlertDialogTheme)
                 .setTitle(R.string.audio_track_dialog_title)
                 .setSingleChoiceItems(labels, checkedIndex, (dialog, which) -> {
                     configStore.setPreferredAudioTrackIndex(which - 1); // -1 = default, 0..N = track 1..N
