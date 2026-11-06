@@ -7,6 +7,9 @@
     <string name="retry">重试播放</string>
     <string name="settings_key_hint">播放中按遥控器“返回”或“菜单”键可进入设置</string>
     <string name="settings_title">功能设置</string>
+    <string name="settings_section_source">播放源</string>
+    <string name="settings_section_playback">播放选项</string>
+    <string name="settings_section_actions">操作</string>
     <string name="not_selected">尚未选择</string>
     <string name="unknown_video_name">已选择的媒体文件</string>
     <string name="auto_start">电视开机后自动启动播放</string>

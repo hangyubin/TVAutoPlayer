@@ -4,6 +4,8 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.text.InputType;
+import android.util.TypedValue;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.Button;
@@ -235,6 +237,9 @@ public final class SettingsActivity extends ComponentActivity {
         // which left the default white input text unreadable. Pin the colors explicitly.
         input.setTextColor(Color.WHITE);
         input.setHintTextColor(Color.parseColor("#FF9AA6B8"));
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        input.setSelectAllOnFocus(true);
         input.setBackgroundResource(R.drawable.input_background);
         int pad = (int) (getResources().getDisplayMetrics().density * 12 + 0.5f);
         input.setPadding(pad, pad, pad, pad);

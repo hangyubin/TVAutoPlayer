@@ -15,8 +15,8 @@ public final class PlaybackConfigStore {
     private static final String KEY_VIDEO_URI = "video_uri";
     private static final String KEY_DISPLAY_NAME = "display_name";
     private static final String KEY_AUTO_START = "auto_start";
-    private static final String KEY_SOUND = "sound";
-    private static final String KEY_SCALE_MODE = "scale_mode";
+    static final String KEY_SOUND = "sound";
+    static final String KEY_SCALE_MODE = "scale_mode";
     private static final String KEY_IMAGE_DURATION = "image_duration";
     private static final String KEY_HINT_SHOWN = "settings_hint_shown";
     private static final String KEY_FIRST_LAUNCH_PROMPT = "first_launch_prompt_shown";
@@ -26,13 +26,24 @@ public final class PlaybackConfigStore {
     private static final String KEY_REMOTE_VERSION = "remote_content_version";
     private static final String KEY_REMOTE_LAST_FETCH = "remote_last_fetch_ms";
     /** Previously chosen audio track (0-based), or -1 = follow the player default. */
-    private static final String KEY_AUDIO_TRACK_INDEX = "audio_track_index";
+    static final String KEY_AUDIO_TRACK_INDEX = "audio_track_index";
 
     private final SharedPreferences preferences;
 
     public PlaybackConfigStore(Context context) {
         preferences = context.getApplicationContext()
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    /** Registers a listener so the live player can react to settings edits immediately. */
+    public void registerPreferenceChangeListener(
+            SharedPreferences.OnSharedPreferenceChangeListener listener) {
+        preferences.registerOnSharedPreferenceChangeListener(listener);
+    }
+
+    public void unregisterPreferenceChangeListener(
+            SharedPreferences.OnSharedPreferenceChangeListener listener) {
+        preferences.unregisterOnSharedPreferenceChangeListener(listener);
     }
 
     public PlaybackConfiguration load() {

@@ -7,6 +7,9 @@
     <string name="retry">Retry</string>
     <string name="settings_key_hint">Press Back or Menu on the remote during playback to open settings</string>
     <string name="settings_title">Settings</string>
+    <string name="settings_section_source">Source</string>
+    <string name="settings_section_playback">Playback</string>
+    <string name="settings_section_actions">Actions</string>
     <string name="not_selected">Not selected</string>
     <string name="unknown_video_name">Selected media file</string>
     <string name="auto_start">Start playback after the TV boots</string>

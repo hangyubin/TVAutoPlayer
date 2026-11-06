@@ -22,11 +22,20 @@
             android:textSize="@dimen/title_text_size"
             android:textStyle="bold" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/settings_section_source"
+            android:textColor="@color/primary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
         <Button
             android:id="@+id/play_mode_button"
             android:layout_width="match_parent"
             android:layout_height="@dimen/button_height"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="10dp"
             android:background="@drawable/button_background"
             android:text="@string/play_mode_usb"
             android:textColor="@color/text_primary"
@@ -92,11 +101,20 @@
             android:textColor="@color/text_secondary"
             android:textSize="16sp" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="@string/settings_section_playback"
+            android:textColor="@color/primary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
         <Button
             android:id="@+id/sound_button"
             android:layout_width="match_parent"
             android:layout_height="@dimen/button_height"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="10dp"
             android:background="@drawable/button_background"
             android:text="@string/sound_on"
             android:textColor="@color/text_primary"
@@ -174,11 +192,20 @@
             android:textColor="@color/text_secondary"
             android:textSize="16sp" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="@string/settings_section_actions"
+            android:textColor="@color/primary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
         <Button
             android:id="@+id/back_to_player_button"
             android:layout_width="match_parent"
             android:layout_height="@dimen/button_height"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="10dp"
             android:background="@drawable/button_background"
             android:text="@string/back_to_player"
             android:textColor="@color/text_primary"
@@ -189,9 +216,9 @@
             android:layout_width="match_parent"
             android:layout_height="@dimen/button_height"
             android:layout_marginTop="12dp"
-            android:background="@drawable/button_background"
+            android:background="@drawable/button_background_danger"
             android:text="@string/exit_player"
-            android:textColor="@color/danger"
+            android:textColor="@color/button_danger_text"
             android:textSize="@dimen/button_text_size" />
     </LinearLayout>
 

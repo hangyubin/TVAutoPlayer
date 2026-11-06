@@ -10,8 +10,8 @@ android {
         applicationId = "com.chenwei.tvautoplay"
         minSdk = 23
         targetSdk = 36
-        versionCode = 18
-        versionName = "1.6.8"
+        versionCode = 19
+        versionName = "1.6.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

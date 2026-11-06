@@ -1,6 +1,7 @@
 package com.chenwei.tvautoplay;
 
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -75,6 +76,19 @@ public final class MainActivity extends ComponentActivity {
     private TextView emptyMessage;
     private TextView errorMessage;
     private PlaybackConfigStore configStore;
+    /**
+     * Applies audio track / volume / aspect ratio edits from the settings screen the moment
+     * they are saved, while the player is still running behind the settings activity.
+     */
+    private final SharedPreferences.OnSharedPreferenceChangeListener preferenceChangeListener =
+            (prefs, key) -> {
+                if (PlaybackConfigStore.KEY_AUDIO_TRACK_INDEX.equals(key)) {
+                    applySavedAudioTrackOverride();
+                } else if (PlaybackConfigStore.KEY_SOUND.equals(key)
+                        || PlaybackConfigStore.KEY_SCALE_MODE.equals(key)) {
+                    applyDisplayPreferences(configStore.load());
+                }
+            };
     private ExoPlayer player;
     private boolean settingsOpen;
     private boolean selectionPromptAttempted;
@@ -142,6 +156,7 @@ public final class MainActivity extends ComponentActivity {
         enterImmersiveMode();
 
         configStore = new PlaybackConfigStore(this);
+        configStore.registerPreferenceChangeListener(preferenceChangeListener);
         playerView = findViewById(R.id.player_view);
         emptyPanel = findViewById(R.id.empty_panel);
         errorPanel = findViewById(R.id.error_panel);
@@ -978,6 +993,7 @@ public final class MainActivity extends ComponentActivity {
 
     @Override
     protected void onDestroy() {
+        configStore.unregisterPreferenceChangeListener(preferenceChangeListener);
         super.onDestroy();
         scheduleHandler.removeCallbacks(scheduleCheck);
         remoteFetcher.shutdownNow();
