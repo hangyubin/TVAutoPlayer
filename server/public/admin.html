@@ -100,6 +100,10 @@
     <button class="btn" id="uploadBtn">上传</button>
     <button class="btn sub" id="uploadCancel" style="display:none">取消</button>
   </div>
+  <div class="row" style="margin-top:8px">
+    <input id="scanDir" class="grow" placeholder="服务器文件夹路径；留空则扫描服务端 import 目录">
+    <button class="btn sub" id="scanBtn">扫描文件夹</button>
+  </div>
   <div id="uploadBox">
     <div class="bar-track"><div class="bar-fill indeterminate" id="barFill"></div></div>
     <div class="info">
@@ -391,6 +395,25 @@ function uploadOne(file, idx, total, items) {
     xhr.send(fd);
   });
 }
+
+$('#scanBtn').onclick = async () => {
+  const dir = $('#scanDir').value.trim();
+  const btn = $('#scanBtn');
+  btn.disabled = true; btn.textContent = '扫描中...';
+  try {
+    const r = await api('POST', '/api/media/scan', { dir });
+    let msg = `扫描 ${r.scanned} 个：新增 ${r.added}，重复 ${r.skipped}`;
+    if (r.failed) msg += `，失败 ${r.failed}`;
+    if (r.truncated) msg += '（单次上限 200 个，请再次扫描）';
+    toast(msg);
+    loadMedia();
+    if (r.errors && r.errors.length) console.warn('scan errors:', r.errors);
+  } catch (e) {
+    // api() already toasts the reason.
+  } finally {
+    btn.disabled = false; btn.textContent = '扫描文件夹';
+  }
+};
 
 $('#uploadBtn').onclick = async () => {
   const files = Array.from($('#file').files || []);

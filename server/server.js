@@ -517,6 +517,84 @@ const server = http.createServer(async (req, res) => {
       notifyContentChanged();
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
+    // 扫描服务器上的文件夹，把图片/视频批量导入媒体库（适合已有大量素材、网页上传太慢的场景）
+    if (p === '/api/media/scan' && req.method === 'POST') {
+      const body = await jsonBody(req);
+      const rawDir = String(body.dir || '').trim();
+      const scanDir = path.resolve(rawDir || path.join(__dirname, 'import'));
+      // 默认导入目录不存在时自动创建，留空扫描不会直接报错
+      if (!rawDir) { try { fs.mkdirSync(scanDir, { recursive: true }); } catch { /* 忽略创建失败 */ } }
+      let st = null;
+      try { st = fs.statSync(scanDir); } catch { /* 目录不存在 */ }
+      if (!st || !st.isDirectory()) return bad(res, `文件夹不存在：${scanDir}`);
+      if (path.resolve(scanDir) === path.resolve(MEDIA_DIR)) {
+        return bad(res, '请选择其他文件夹；媒体目录由系统自动管理');
+      }
+      const MAX_FILES = 200;
+      const files = [];
+      let truncated = false;
+      const walk = (dir, depth) => {
+        if (truncated || depth > 5) return;
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+          if (truncated) return;
+          if (e.name.startsWith('.')) continue;
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) { walk(full, depth + 1); continue; }
+          if (!e.isFile() || !kindOf(e.name)) continue;
+          files.push(full);
+          if (files.length >= MAX_FILES) { truncated = true; return; }
+        }
+      };
+      walk(scanDir, 0);
+
+      let added = 0, skipped = 0, failed = 0;
+      const errors = [];
+      for (const file of files) {
+        try {
+          const kind = kindOf(file);
+          const statSize = fs.statSync(file).size;
+          if (statSize <= 0) { failed++; errors.push(`${path.basename(file)}: 空文件`); continue; }
+          const sha256 = await sha256OfRange(file, 0, statSize - 1);
+          if (db.prepare('SELECT 1 FROM media WHERE sha256 = ? AND kind = ?').get(sha256, kind)) {
+            skipped++;
+            continue;
+          }
+          let source = file, srcStart = 0, srcEnd = statSize - 1, finalSize = statSize;
+          let tmpRemux = null;
+          if (kind === 'VIDEO' && path.extname(file).toLowerCase() === '.mkv' && isLegacyMkv(file, 0)) {
+            if (!ffmpegAvailable()) {
+              failed++;
+              errors.push(`${path.basename(file)}: 旧封装 MKV，请先安装 ffmpeg`);
+              continue;
+            }
+            const rr = await remuxMkv({ tmp: file, start: 0, end: statSize - 1, filename: path.basename(file) });
+            if (rr.error) { failed++; errors.push(`${path.basename(file)}: ${rr.error}`); continue; }
+            source = rr.up.tmp;
+            srcStart = rr.up.start;
+            srcEnd = rr.up.end;
+            finalSize = rr.up.size;
+            tmpRemux = rr.up.tmp;
+          }
+          const storeName = `${sha256.slice(0, 16)}${path.extname(file).toLowerCase()}`;
+          await copyRange(source, srcStart, srcEnd, path.join(MEDIA_DIR, storeName));
+          if (tmpRemux) fs.rmSync(tmpRemux, { force: true });
+          db.prepare('INSERT INTO media (filename, orig_name, sha256, kind, size) VALUES (?,?,?,?,?)')
+            .run(storeName, path.basename(file).slice(0, 120), sha256, kind, finalSize);
+          added++;
+        } catch (e) {
+          failed++;
+          errors.push(`${path.basename(file)}: ${e.message}`);
+        }
+      }
+      if (added) notifyContentChanged();
+      console.log(`[scan] ${scanDir} 扫描 ${files.length} 个，新增 ${added}，重复 ${skipped}，失败 ${failed}`);
+      return ok(res, {
+        dir: scanDir, scanned: files.length, added, skipped, failed, truncated,
+        errors: errors.slice(0, 10),
+      });
+    }
     let m = /^\/api\/media\/(\d+)$/.exec(p);
     if (m && req.method === 'DELETE') {
       const row = db.prepare('SELECT * FROM media WHERE id = ?').get(m[1]);
