@@ -1,6 +1,7 @@
 package com.chenwei.tvautoplay;
 
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -22,6 +23,8 @@ import java.util.concurrent.Executors;
 public final class SettingsActivity extends ComponentActivity {
 
     public static final String EXTRA_CURRENT_AUDIO_TRACK_COUNT = "audio_track_count";
+    /** Result flag telling MainActivity to shut the player down instead of resuming. */
+    public static final String EXTRA_EXIT_PLAYER = "exit_player";
 
     private final ExecutorService background = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "SettingsBackground");
@@ -66,7 +69,7 @@ public final class SettingsActivity extends ComponentActivity {
         playModeButton.setOnClickListener(view -> togglePlayMode());
         serverUrlButton.setOnClickListener(view -> editServerUrl());
         findViewById(R.id.back_to_player_button).setOnClickListener(view -> finish());
-        findViewById(R.id.exit_player_button).setOnClickListener(view -> finishAffinity());
+        findViewById(R.id.exit_player_button).setOnClickListener(view -> exitPlayer());
         autoStart.setOnClickListener(view ->
                 configStore.setAutoStartEnabled(autoStart.isChecked()));
         soundButton.setOnClickListener(view -> toggleSound());
@@ -88,6 +91,13 @@ public final class SettingsActivity extends ComponentActivity {
         destroyed = true;
         background.shutdownNow();
         super.onDestroy();
+    }
+
+    private void exitPlayer() {
+        Intent result = new Intent();
+        result.putExtra(EXTRA_EXIT_PLAYER, true);
+        setResult(RESULT_OK, result);
+        finishAffinity();
     }
 
     private void togglePlayMode() {

@@ -108,6 +108,15 @@ public final class MainActivity extends ComponentActivity {
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
                     settingsOpen = false;
+                    Intent data = result.getData();
+                    if (result.getResultCode() == RESULT_OK && data != null
+                            && data.getBooleanExtra(SettingsActivity.EXTRA_EXIT_PLAYER, false)) {
+                        // The settings screen asked to quit. finishAffinity() alone can leave
+                        // this singleTask activity alive on some TV launchers, reconnect and
+                        // restart playback, so remove the whole task here.
+                        finishAndRemoveTask();
+                        return;
+                    }
                     startConfiguredPlayback();
                 }
         );
