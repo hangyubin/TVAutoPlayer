@@ -66,6 +66,7 @@ public final class SettingsActivity extends ComponentActivity {
         playModeButton.setOnClickListener(view -> togglePlayMode());
         serverUrlButton.setOnClickListener(view -> editServerUrl());
         findViewById(R.id.back_to_player_button).setOnClickListener(view -> finish());
+        findViewById(R.id.exit_player_button).setOnClickListener(view -> finishAffinity());
         autoStart.setOnClickListener(view ->
                 configStore.setAutoStartEnabled(autoStart.isChecked()));
         soundButton.setOnClickListener(view -> toggleSound());
