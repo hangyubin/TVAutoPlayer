@@ -298,6 +298,46 @@ const copyRange = (src, start, end, dest) => new Promise((resolve, reject) => {
     .on('error', reject);
 });
 
+// Cuts the multipart data range into the destination file while hashing it in the same pass.
+// Large uploads used to be read twice (hash, then copy); one pass halves the disk reads.
+const extractAndHash = (src, start, end, dest) => new Promise((resolve, reject) => {
+  const h = crypto.createHash('sha256');
+  const rs = fs.createReadStream(src, { start, end, highWaterMark: 1024 * 1024 });
+  const ws = fs.createWriteStream(dest);
+  let settled = false;
+  const fail = (e) => {
+    if (settled) return;
+    settled = true;
+    rs.destroy();
+    ws.destroy();
+    fs.rmSync(dest, { force: true });
+    reject(e);
+  };
+  rs.on('error', fail);
+  ws.on('error', fail);
+  ws.on('finish', () => {
+    if (settled) return;
+    settled = true;
+    resolve(h.digest('hex'));
+  });
+  rs.on('data', (chunk) => h.update(chunk));
+  rs.pipe(ws);
+});
+
+// 启动时清理异常退出遗留的上传/重封装临时文件，避免长期占用磁盘
+(function cleanupTempFiles() {
+  let names = [];
+  try { names = fs.readdirSync(MEDIA_DIR); } catch { return; }
+  const cutoff = Date.now() - 6 * 3600 * 1000;
+  for (const name of names) {
+    if (!/^\.(upload|pending|remux)-/.test(name)) continue;
+    const full = path.join(MEDIA_DIR, name);
+    try {
+      if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { force: true });
+    } catch { /* 忽略单个文件清理失败 */ }
+  }
+})();
+
 // ---------- 旧封装 MKV 处理 ----------
 // 2008 年前后 mkvmerge v2 时代生成的 MKV（DocTypeVersion=1，常伴 zlib 压缩字幕轨），
 // 会被电视端 Media3 解析器拒绝（ERROR_CODE_PARSING_CONTAINER_MALFORMED）。
@@ -502,15 +542,27 @@ const server = http.createServer(async (req, res) => {
         up = rr.up;
         console.log(`[mkv] ${up.filename} 为旧封装，已自动重封装`);
       }
-      const sha256 = await sha256OfRange(up.tmp, up.start, up.end);
+      const ext = path.extname(up.filename).toLowerCase();
+      const pendingPath = path.join(MEDIA_DIR, `.pending-${crypto.randomUUID()}${ext}`);
+      let sha256;
+      if (up.start === 0) {
+        // Remux output is already a plain media file, so move it instead of copying.
+        fs.renameSync(up.tmp, pendingPath);
+        sha256 = await sha256OfRange(pendingPath, 0, up.size - 1);
+      } else {
+        sha256 = await extractAndHash(up.tmp, up.start, up.end, pendingPath);
+        fs.rmSync(up.tmp, { force: true });
+      }
       const exists = db.prepare('SELECT * FROM media WHERE sha256 = ? AND kind = ?').get(sha256, kind);
       if (exists) {
-        fs.rmSync(up.tmp, { force: true });
+        fs.rmSync(pendingPath, { force: true });
         return ok(res, { ...exists, duplicated: true });
       }
-      const storeName = `${sha256.slice(0, 16)}${path.extname(up.filename).toLowerCase()}`;
-      await copyRange(up.tmp, up.start, up.end, path.join(MEDIA_DIR, storeName));
-      fs.rmSync(up.tmp, { force: true });
+      const storeName = `${sha256.slice(0, 16)}${ext}`;
+      const target = path.join(MEDIA_DIR, storeName);
+      if (fs.existsSync(target)) fs.rmSync(target, { force: true });
+      // Same-folder rename: the file is never copied a second time.
+      fs.renameSync(pendingPath, target);
       const info = db.prepare(
         'INSERT INTO media (filename, orig_name, sha256, kind, size) VALUES (?,?,?,?,?)'
       ).run(storeName, up.filename.slice(0, 120), sha256, kind, up.size);
@@ -773,6 +825,11 @@ const server = http.createServer(async (req, res) => {
     send(res, e.message === '文件过大' ? 413 : 500, { error: e.message });
   }
 });
+
+// Node 18+ aborts requests after 300s by default, which kills slow large uploads.
+server.requestTimeout = 0;
+server.headersTimeout = 120000;
+server.keepAliveTimeout = 65000;
 
 server.listen(PORT, () => {
   const nets = require('os').networkInterfaces();
