@@ -96,6 +96,10 @@ public final class MainActivity extends ComponentActivity {
     /** Last remote configuration received; used for 30 s schedule-boundary checks. */
     private PlaybackConfiguration lastRemoteConfig;
     private List<PlaylistItem> currentPlayable = new ArrayList<>();
+    /** Resume point of the default program, saved when a schedule takes over. */
+    private int defaultResumeIndex = -1;
+    private long defaultResumePositionMs;
+    private String defaultResumeUri;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -440,7 +444,17 @@ public final class MainActivity extends ComponentActivity {
     /** Unified playback renderer used by both local and remote paths. */
     private void renderConfiguration(PlaybackConfiguration configuration, String sourceTag) {
         ResolvedPlaylist effective = resolveEffectivePlaylist(configuration);
-        activePlaylistSourceId = sourceTag != null ? sourceTag : effective.sourceId();
+        String newSourceId = sourceTag != null ? sourceTag : effective.sourceId();
+        boolean leavingDefaultProgram = isDefaultSource(activePlaylistSourceId)
+                && !isDefaultSource(newSourceId);
+        boolean returningToDefaultProgram = !isDefaultSource(activePlaylistSourceId)
+                && isDefaultSource(newSourceId);
+        if (leavingDefaultProgram) {
+            // Remember where the default program was interrupted so a schedule boundary
+            // can resume it instead of restarting from the first item.
+            rememberDefaultProgress();
+        }
+        activePlaylistSourceId = newSourceId;
         // Remote items are absolute http(s) URLs; USB items were already verified by
         // the scanner (content:// on Android 10+, file:// on older TVs).
         List<PlaylistItem> playable = effective.playlist();
@@ -490,7 +504,23 @@ public final class MainActivity extends ComponentActivity {
         // Reuse the player across source switches: swapping the playlist on a warm
         // instance keeps the video surface alive, avoiding the black flash and full
         // re-buffer that a release/rebuild cycle caused on every transition.
-        player.setMediaItems(mediaItems, true);
+        int resumeIndex = 0;
+        long resumePositionMs = 0L;
+        if (returningToDefaultProgram) {
+            int index = resolveDefaultResumeIndex(playable);
+            if (index >= 0) {
+                resumeIndex = index;
+                resumePositionMs = defaultResumePositionMs;
+            }
+            defaultResumeIndex = -1;
+            defaultResumeUri = null;
+            defaultResumePositionMs = 0L;
+        }
+        if (resumeIndex > 0 || resumePositionMs > 0L) {
+            player.setMediaItems(mediaItems, resumeIndex, resumePositionMs);
+        } else {
+            player.setMediaItems(mediaItems, true);
+        }
         player.prepare();
         player.play();
         currentPlayable = playable;
@@ -508,6 +538,45 @@ public final class MainActivity extends ComponentActivity {
                 configuration.scheduleEnabled(),
                 ScheduleClock.currentMinuteOfDay()
         );
+    }
+
+    private boolean isDefaultSource(String sourceId) {
+        return sourceId == null || ResolvedPlaylist.DEFAULT_SOURCE_ID.equals(sourceId);
+    }
+
+    private void rememberDefaultProgress() {
+        if (player == null || currentPlayable.isEmpty()) {
+            return;
+        }
+        int index = player.getCurrentMediaItemIndex();
+        if (index < 0 || index >= currentPlayable.size()) {
+            return;
+        }
+        PlaylistItem item = currentPlayable.get(index);
+        defaultResumeIndex = index;
+        defaultResumeUri = item.uri();
+        // Still images have no meaningful seek position; restart the image instead.
+        defaultResumePositionMs = item.kind() == MediaKind.IMAGE
+                ? 0L
+                : Math.max(0L, player.getCurrentPosition());
+    }
+
+    /** Maps the saved default-program position onto the current playlist, or -1. */
+    private int resolveDefaultResumeIndex(List<PlaylistItem> playable) {
+        if (defaultResumeIndex < 0 || defaultResumeUri == null) {
+            return -1;
+        }
+        if (defaultResumeIndex < playable.size()
+                && defaultResumeUri.equals(playable.get(defaultResumeIndex).uri())) {
+            return defaultResumeIndex;
+        }
+        // The default program may have been reordered while the schedule was playing.
+        for (int i = 0; i < playable.size(); i++) {
+            if (defaultResumeUri.equals(playable.get(i).uri())) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** True while a schedule that just failed is waiting out its retry cooldown. */
