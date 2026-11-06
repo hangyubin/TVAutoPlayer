@@ -2,6 +2,7 @@ package com.chenwei.tvautoplay;
 
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -230,6 +231,13 @@ public final class SettingsActivity extends ComponentActivity {
         input.setHint(R.string.server_url_hint);
         input.setText(configStore.serverUrl());
         input.setSingleLine(true);
+        // Some TV ROMs render dialogs on a light background while the app theme is dark,
+        // which left the default white input text unreadable. Pin the colors explicitly.
+        input.setTextColor(Color.WHITE);
+        input.setHintTextColor(Color.parseColor("#FF9AA6B8"));
+        input.setBackgroundResource(R.drawable.input_background);
+        int pad = (int) (getResources().getDisplayMetrics().density * 12 + 0.5f);
+        input.setPadding(pad, pad, pad, pad);
         new AlertDialog.Builder(this)
                 .setTitle(R.string.server_url_dialog_title)
                 .setView(input)
