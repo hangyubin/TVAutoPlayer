@@ -61,10 +61,10 @@ TV Auto Player 是一款面向 **Android TV、电视盒子、门店屏幕和数�
 也可以通过 ADB 安装：
 
 ```powershell
-adb install -r .\TVAutoPlayer-v1.6.0-debug.apk
+adb install -r .\TVAutoPlayer-v1.6.1-debug.apk
 ```
 
-当前稳定版：**V1.6.0**
+当前稳定版：**V1.6.1**
 
 > 当前 Release APK 使用 Android Debug 证书签名，适合测试、内网、展厅和门店侧载。正式批量部署前，请使用企业自己的 Release 证书构建并妥善保管签名密钥。
 
