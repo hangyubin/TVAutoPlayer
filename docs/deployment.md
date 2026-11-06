@@ -78,33 +78,39 @@ adb shell am broadcast -a android.intent.action.BOOT_COMPLETED com.chenwei.tvaut
 4. 放行端口：`sudo ufw allow 8300/tcp`；云服务器还需要在安全组中放行。
 5. 需要旧封装 MKV 自动重封装时安装 ffmpeg：`sudo apt install -y ffmpeg`。不安装只影响旧 MKV 上传，其他功能正常。
 
-常驻运行（systemd）：
+常驻运行并开机自启（systemd 用户服务，不需要 root）：
 
-```ini
+```bash
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/tvautoplayer.service <<'EOF'
 [Unit]
 Description=TVAutoPlayer Server
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 WorkingDirectory=/path/to/TVAutoPlayer/server
 Environment=PORT=8300
+Environment=PATH=/home/youruser/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/node server.js
 Restart=always
-User=youruser
+RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now tvautoplayer
+loginctl enable-linger "$USER"
 ```
 
-保存为 `/etc/systemd/system/tvautoplayer.service` 后执行：
+- `ExecStart` 的 node 路径用 `which node` 的结果替换，`WorkingDirectory` 改成实际目录，`PATH` 里的用户名和 node 目录按实际修改（需要包含 node 和 ffmpeg 所在目录）。
+- `loginctl enable-linger` 必须执行，否则用户未登录时服务不会随开机启动。
+- 查看状态与日志：`systemctl --user status tvautoplayer`、`journalctl --user -u tvautoplayer -f`。
+- 进程异常退出会自动在 5 秒后重启；重启系统后可访问 `http://服务器IP:8300/` 确认已自动运行。
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now tvautoplayer
-sudo systemctl status tvautoplayer
-```
-
-> 升级时只替换 `.js` 文件与 `public/` 目录，不要覆盖 `data.db` 和 `media/`；这两项需要定期备份。
+> 升级时只替换 `.js` 文件与 `public/` 目录，不要覆盖 `data.db` 和 `media/`；这两项需要定期备份。升级后执行 `systemctl --user restart tvautoplayer`。
 
 ### Windows（免安装绿色包）
 
