@@ -23,6 +23,7 @@
     <string name="delete">Delete</string>
     <string name="cancel">Cancel</string>
     <string name="back_to_player">Back to player</string>
+    <string name="exit_player">Exit player</string>
     <string name="remote_hint">Remote tip: press Back, Menu, or Settings on the playback screen to return here.</string>
     <string name="supported_formats_hint">Video supports common containers such as MP4, MKV, WebM, and MPEG-TS. Images support JPEG, PNG, WebP, BMP, and HEIF/HEIC; AVIF requires Android 14+. Animated GIF is not supported.</string>
     <string name="invalid_media_selection">No supported images or videos were selected. Please try again.</string>
