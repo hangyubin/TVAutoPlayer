@@ -56,13 +56,14 @@
   #userPanel { margin-left: auto; display: flex; gap: 8px; align-items: center; }
   #userPanel .who { color: #d7e9de; font-size: 13px; }
   #userPanel button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; }
-  /* 改密码弹窗 */
-  #pwdModal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 11; }
-  #pwdModal.show { display: flex; }
-  #pwdModal .box { background: #fff; border-radius: 10px; padding: 20px; width: 320px; box-shadow: 0 12px 30px rgba(0,0,0,.2); }
-  #pwdModal h3 { font-size: 15px; margin-bottom: 14px; }
-  #pwdModal input { width: 100%; margin-bottom: 10px; }
-  #pwdModal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  /* 改密码 / 新增媒体库 弹窗 */
+  #pwdModal, #libModal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 11; }
+  #pwdModal.show, #libModal.show { display: flex; }
+  #pwdModal .box, #libModal .box { background: #fff; border-radius: 10px; padding: 20px; width: 340px; box-shadow: 0 12px 30px rgba(0,0,0,.2); }
+  #pwdModal h3, #libModal h3 { font-size: 15px; margin-bottom: 14px; }
+  #pwdModal input, #libModal input { width: 100%; margin-bottom: 10px; }
+  #pwdModal .actions, #libModal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  #libModal .hint { color: #8f959e; font-size: 12px; margin-bottom: 10px; }
   /* 上传进度 */
   #uploadBox { margin-top: 10px; display: none; }
   #uploadBox.show { display: block; }
@@ -94,19 +95,13 @@
 <main>
 
 <section id="tab-media" class="card">
-  <h2>媒体库</h2>
+  <div class="row">
+    <h2 class="grow" style="margin:0">媒体库</h2>
+    <button class="btn" id="libAddBtn">新增媒体库</button>
+  </div>
+  <p class="muted" style="margin:6px 0 10px">每个媒体库单独扫描；节目单和时段按库分组选择素材。外部文件夹只建立链接，不复制、不移动原文件。</p>
   <div id="libList"></div>
-  <div class="row" style="margin-top:8px">
-    <input id="libName" class="grow" placeholder="媒体库名称，如 广告素材">
-    <input id="libPath" class="grow" placeholder="文件夹绝对路径，如 D:\Videos 或 /mnt/nas/videos">
-    <button class="btn" id="libAdd">添加媒体库</button>
-  </div>
-  <p class="muted" style="margin:6px 0 0">外部文件夹只建立链接引用，不复制、不移动原文件；删除媒体库不会删除磁盘上的源文件。</p>
-  <div class="row" style="margin-top:8px">
-    <span class="muted grow" id="scanHint">把素材直接拷入服务器媒体文件夹后点击扫描</span>
-    <button class="btn sub" id="scanBtn">扫描全部</button>
-  </div>
-  <div class="row" style="margin-top:8px">
+  <div class="row" style="margin-top:14px">
     <input type="file" id="file" class="grow" accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.heif,.mp4,.mkv,.webm,.ts,.m4v,.mov" multiple>
     <button class="btn" id="uploadBtn">上传到主库</button>
     <button class="btn sub" id="uploadCancel" style="display:none">取消</button>
@@ -186,6 +181,20 @@
   <button class="btn" id="loginBtn" type="submit">登录</button>
   <p class="hint">首次启动默认账户 admin / admin</p>
 </form>
+
+<!-- 新增媒体库弹窗 -->
+<div id="libModal">
+  <form class="box" onsubmit="return false">
+    <h3>新增媒体库</h3>
+    <p class="hint">填写一个已存在的文件夹，添加后只扫描这一个库。</p>
+    <input id="libName" placeholder="媒体库名称，如 广告素材" autocomplete="off">
+    <input id="libPath" placeholder="文件夹绝对路径，如 D:\Videos 或 /mnt/nas/videos" autocomplete="off">
+    <div class="actions">
+      <button class="btn sub" id="libCancel" type="button">取消</button>
+      <button class="btn" id="libOk" type="submit">添加并扫描</button>
+    </div>
+  </form>
+</div>
 
 <!-- 改密码弹窗 -->
 <div id="pwdModal">
@@ -299,7 +308,6 @@ const itemNameOf = (it) => it.liveId != null ? liveNameOf(it.liveId) : mediaName
 // ----- 媒体库 -----
 async function loadMedia() {
   media = await api('GET', '/api/media');
-  loadScanHint();
   $('#mediaList').innerHTML = media.map(m => {
     const url = 'media/' + m.filename;
     const thumb = m.kind === 'IMAGE'
@@ -468,18 +476,6 @@ function uploadOne(file, idx, total, items) {
   });
 }
 
-// 登录后才请求媒体目录（未登录直接调用会触发「未登录」提示）
-function loadScanHint() {
-  fetch('/api/media/scan', { credentials: 'same-origin' })
-    .then(r => (r.ok ? r.json() : null))
-    .then(r => {
-      if (!r || !r.libraries) return;
-      const dirs = r.libraries.map(l => l.isMain ? `${l.name}（服务端 media 目录）` : l.name);
-      $('#scanHint').textContent = `已启用媒体库：${dirs.join('、')}。点「扫描全部」按库批量入库`;
-    })
-    .catch(() => {});
-}
-
 // ----- 媒体库管理 -----
 let libraries = [];
 async function loadLibraries() {
@@ -487,24 +483,22 @@ async function loadLibraries() {
   renderLibraries();
   $('#schMedia').innerHTML = schedOptionsHtml();
 }
-function libraryTag(l) {
-  return `<span class="tag ${l.isMain ? 'img' : 'vid'}" title="${esc(l.path)}">${l.isMain ? '主库' : '外部'}</span>`;
-}
 function renderLibraries() {
   $('#libList').innerHTML = libraries.map(l => `
-    <div class="row" style="margin-top:6px;border:1px solid #e3e5e7;border-radius:6px;padding:8px;align-items:center">
-      ${libraryTag(l)}
+    <div class="row" style="border:1px solid #e3e5e7;border-radius:6px;padding:8px 10px;margin-bottom:6px;align-items:center">
       <span class="grow" style="min-width:0">
         <b>${esc(l.name)}</b>
         <span class="muted" style="margin-left:8px;word-break:break-all">${esc(l.path)}</span>
         <br><span class="muted">${l.mediaCount} 个媒体${l.enabled ? '' : ' · 已停用'}${l.exists ? '' : ' · 目录不可访问'}</span>
       </span>
-      <button class="btn sub" onclick="scanLibrary(${l.id})">扫描</button>
+      <button class="btn sub" id="scan-lib-${l.id}" onclick="scanLibrary(${l.id})">扫描</button>
       ${l.isMain ? '' : `<button class="btn warn" onclick="delLibrary(${l.id})">删除</button>`}
     </div>`).join('');
 }
-window.scanLibrary = async (id) => {
+async function scanLibrary(id) {
   const lib = libraries.find(l => l.id === id);
+  const btn = document.getElementById(`scan-lib-${id}`);
+  if (btn) { btn.disabled = true; btn.textContent = '扫描中...'; }
   try {
     const r = await api('POST', `/api/libraries/${id}/scan`, {});
     let msg = `${lib ? lib.name : '媒体库'}：扫描 ${r.scanned} 个，新增 ${r.added}，重复 ${r.skipped}`;
@@ -515,8 +509,12 @@ window.scanLibrary = async (id) => {
     await loadMedia();
     await loadLibraries();
     if (r.errors && r.errors.length) console.warn('scan errors:', r.errors);
-  } catch (e) { /* api() 已提示原因 */ }
-};
+  } catch (e) {
+    // api() 已提示原因
+    if (btn) { btn.disabled = false; btn.textContent = '扫描'; }
+  }
+}
+window.scanLibrary = scanLibrary;
 window.delLibrary = async (id) => {
   const lib = libraries.find(l => l.id === id);
   if (!confirm(`删除媒体库「${lib ? lib.name : id}」？\n库内的 ${lib ? lib.mediaCount : ''} 个媒体会从媒体库和节目单中移除，外部源文件不会被删除。`)) return;
@@ -531,37 +529,36 @@ window.delLibrary = async (id) => {
     loadSchedules();
   } catch (e) { /* api() 已提示原因 */ }
 };
-$('#libAdd').onclick = async () => {
+
+const libModal = $('#libModal');
+$('#libAddBtn').onclick = () => {
+  $('#libName').value = '';
+  $('#libPath').value = '';
+  libModal.classList.add('show');
+  $('#libName').focus();
+};
+$('#libCancel').onclick = () => libModal.classList.remove('show');
+$('#libModal').onclick = (e) => {
+  if (e.target === libModal) libModal.classList.remove('show');
+};
+$('#libOk').onclick = async () => {
   const name = $('#libName').value.trim();
   const dir = $('#libPath').value.trim();
   if (!name) return toast('请填写媒体库名称');
   if (!dir) return toast('请填写文件夹绝对路径');
+  const btn = $('#libOk');
+  btn.disabled = true; btn.textContent = '添加中...';
   try {
     const r = await api('POST', '/api/libraries', { name, path: dir });
-    $('#libName').value = ''; $('#libPath').value = '';
+    libModal.classList.remove('show');
     libraries = r.libraries;
     renderLibraries();
-    toast(`媒体库「${name}」已添加，点「扫描」导入其中的媒体`);
-  } catch (e) { /* api() 已提示原因 */ }
-};
-
-$('#scanBtn').onclick = async () => {
-  const btn = $('#scanBtn');
-  btn.disabled = true; btn.textContent = '扫描中...';
-  try {
-    const r = await api('POST', '/api/media/scan', {});
-    let msg = `扫描 ${r.scanned} 个新文件：新增 ${r.added}，重复 ${r.skipped}`;
-    if (r.already) msg += `（已有 ${r.already} 个入库文件跳过）`;
-    if (r.failed) msg += `，失败 ${r.failed}`;
-    if (r.truncated) msg += `（单次上限 ${r.limit || 300} 个，请再次扫描）`;
-    toast(msg);
-    await loadMedia();
-    await loadLibraries();
-    if (r.errors && r.errors.length) console.warn('scan errors:', r.errors);
+    toast(`媒体库「${name}」已添加，正在扫描`);
+    await scanLibrary(r.id);
   } catch (e) {
-    // api() already toasts the reason.
+    // api() 已提示原因
   } finally {
-    btn.disabled = false; btn.textContent = '扫描全部';
+    btn.disabled = false; btn.textContent = '添加并扫描';
   }
 };
 

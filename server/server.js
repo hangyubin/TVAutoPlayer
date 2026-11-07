@@ -898,18 +898,6 @@ const server = http.createServer(async (req, res) => {
       notifyContentChanged();
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
-    // 扫描全部启用中的媒体库
-    if (p === '/api/media/scan' && req.method === 'GET') {
-      return ok(res, { libraries: listLibraries() });
-    }
-    if (p === '/api/media/scan' && req.method === 'POST') {
-      req.resume();
-      const targets = db.prepare(
-        'SELECT id, name, path, is_main FROM libraries WHERE enabled = 1 ORDER BY is_main DESC, id'
-      ).all();
-      if (!targets.length) return bad(res, '没有启用中的媒体库');
-      return ok(res, await scanLibraries(targets));
-    }
     let m = /^\/api\/media\/(\d+)$/.exec(p);
     if (m && req.method === 'DELETE') {
       const row = db.prepare('SELECT * FROM media WHERE id = ?').get(m[1]);
