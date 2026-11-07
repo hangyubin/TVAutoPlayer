@@ -2,7 +2,15 @@
 chcp 65001 >nul
 title TVAutoPlayer 媒体服务端
 cd /d "%~dp0"
-set PORT=8300
+
+rem 端口默认 8300；config.env 里配置的 PORT 优先（仅用于显示地址和自动打开浏览器，
+rem 其余配置项由 server.js 直接读取 config.env）
+if not defined PORT set "PORT=8300"
+if exist "%~dp0config.env" (
+  for /f "usebackq eol=# tokens=1,* delims==" %%a in ("%~dp0config.env") do (
+    if /i "%%a"=="PORT" set "PORT=%%b"
+  )
+)
 
 rem 媒体目录必须存在，否则上传会失败
 if not exist "%~dp0media" mkdir "%~dp0media"

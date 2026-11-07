@@ -10,7 +10,28 @@ const { spawnSync } = require('child_process');
 const db = require('./db');
 const { buildManifest, validateSchedule, newScheduleId } = require('./manifest');
 
-const PORT = process.env.PORT || 8080;
+// 同目录 config.env 存放本机配置（KEY=VALUE，# 为注释）。
+// 用 Node 读取而不是批处理，Windows 上中文路径、CRLF 都不会出问题；已在环境变量里的值优先。
+function loadConfigFile() {
+  let text = '';
+  try {
+    text = fs.readFileSync(path.join(__dirname, 'config.env'), 'utf8');
+  } catch {
+    return; // 没有配置文件时全部走默认值
+  }
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    const value = line.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+    if (!(key in process.env)) process.env[key] = value;
+  }
+}
+loadConfigFile();
+
+const PORT = process.env.PORT || 8300;
 const MEDIA_DIR = path.join(__dirname, 'media');
 const MAX_UPLOAD_GB = Math.max(1, Number(process.env.MAX_UPLOAD_GB) || 8);
 const MAX_UPLOAD = MAX_UPLOAD_GB * 1024 * 1024 * 1024;
@@ -97,16 +118,25 @@ const bad = (res, msg) => send(res, 400, { error: msg });
 
 /**
  * Links a file that lives outside the media folder into the library without copying it.
- * Returns false when the platform refuses symlinks (Windows without developer mode),
- * so the caller can fall back to a real copy.
+ * A symlink is tried first because it also works across volumes; when the platform refuses
+ * it (Windows without developer mode or admin rights) a hard link is used, which needs no
+ * privileges but only works inside the same volume. Returns false when both fail, so the
+ * caller can fall back to a real copy.
  */
 function linkExternal(src, dest) {
   try {
     fs.symlinkSync(src, dest, 'file');
     return true;
   } catch {
-    return false;
+    // Not permitted: Windows requires SeCreateSymbolicLinkPrivilege.
   }
+  try {
+    fs.linkSync(src, dest);
+    return true;
+  } catch {
+    // Different volume: the caller copies the file instead.
+  }
+  return false;
 }
 
 function readBody(req) {
