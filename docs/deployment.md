@@ -2,7 +2,7 @@
 
 ## 测试部署
 
-1. 从 [GitHub Release v1.6.9](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.6.9) 下载 `TVAutoPlayer-v1.6.9-debug.apk` 并复制到 U 盘。
+1. 从 [GitHub Release v1.7.0](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.7.0) 下载 `TVAutoPlayer-v1.7.0-debug.apk` 并复制到 U 盘。
 2. 电视开启“允许安装未知来源应用”。
 3. 安装 APK，首次打开后授予照片和视频只读权限，在内置媒体库中选择图片或视频。
 4. 在电视的应用/电池/后台管理中允许本应用自启动和后台运行。
@@ -133,13 +133,41 @@ loginctl enable-linger "$USER"
 
 批量导入媒体：
 
-- 扫描的就是媒体目录 `server/media/`（Windows 包内为 `TVAutoPlayer-Server\media\`），与网页上传共用同一个目录，没有额外目录。
+- 主目录固定为 `server/media/`（Windows 包内为 `TVAutoPlayer-Server\media\`），与网页上传共用，网页端不能随意指定路径。
 - 把图片/视频复制到该目录（可含子目录），在「媒体库」点「扫描媒体文件夹」即可。
 - 入库后文件会重命名为「内容哈希.扩展名」，是移动而不是复制，不额外占用磁盘；子目录中的文件会移动到媒体目录根目录。
 - 已在库中的文件按文件名直接跳过；内容与库中某文件重复时保留原文件并跳过。
-- 网页端不能指定其他路径，避免误扫描服务器系统目录。
 - 扫描会递归子目录（最多 5 层），旧封装 MKV 自动重封装（需要 ffmpeg）。
-- 单次最多处理 200 个新文件，超出会提示再次扫描。
+- 单次最多处理 300 个新文件，超出会提示再次扫描。
+
+#### 把其它文件夹也加入媒体库
+
+素材已经在 NAS、移动硬盘或别的磁盘上时，不用复制，用环境变量 `MEDIA_EXTRA_DIRS` 把这些目录挂进媒体库：
+
+```bash
+# Linux / macOS：多个目录用冒号分隔
+MEDIA_EXTRA_DIRS="/mnt/nas/ads:/data/videos" node server.js
+```
+
+```bat
+rem Windows：多个目录用分号分隔
+set MEDIA_EXTRA_DIRS=D:\Videos;E:\广告素材
+启动服务.bat
+```
+
+systemd 部署时加到服务的环境变量里：
+
+```ini
+Environment=MEDIA_EXTRA_DIRS=/mnt/nas/ads:/data/videos
+```
+
+要点：
+
+- 外部目录里的文件会以**软链接**放入 `media/`，不复制、不移动、不删除原文件，扫描大目录几乎瞬时完成。
+- 原文件被删除或移动后，对应节目会播放失败，重新扫描一次即可同步。
+- 删除这类媒体只会从媒体库移除（源文件保留）；只要文件还在外部目录里，下次扫描会重新加入。
+- Windows 未开启「开发者模式」时系统不允许创建软链接，程序会自动退回复制文件（会占用磁盘空间）。
+- 外部目录里如果和库中已有内容完全一致，会按内容哈希判重并跳过。
 
 上传大文件：
 

@@ -53,4 +53,10 @@ CREATE TABLE IF NOT EXISTS admin_user (
 );
 `);
 
+// 轻量迁移：记录外部媒体文件夹里的源文件路径，重复扫描时可直接跳过哈希
+const mediaColumns = db.prepare('PRAGMA table_info(media)').all().map((column) => column.name);
+if (!mediaColumns.includes('source_path')) {
+  db.exec('ALTER TABLE media ADD COLUMN source_path TEXT');
+}
+
 module.exports = db;

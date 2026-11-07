@@ -14,6 +14,14 @@ const PORT = process.env.PORT || 8080;
 const MEDIA_DIR = path.join(__dirname, 'media');
 const MAX_UPLOAD_GB = Math.max(1, Number(process.env.MAX_UPLOAD_GB) || 8);
 const MAX_UPLOAD = MAX_UPLOAD_GB * 1024 * 1024 * 1024;
+// Extra folders that may already hold media (NAS mounts, other disks). Files found there are
+// linked into the media library instead of being copied, so scanning stays instant and the
+// originals are left untouched. Multiple folders are separated by the OS path delimiter.
+const EXTRA_MEDIA_DIRS = (process.env.MEDIA_EXTRA_DIRS || '')
+  .split(path.delimiter)
+  .map((dir) => dir.trim())
+  .filter(Boolean)
+  .map((dir) => path.resolve(dir));
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // 可选环境变量口令（兼容旧方案）
 
 // ---------- 密码 / 会话 ----------
@@ -86,6 +94,20 @@ function send(res, code, body, type = 'application/json; charset=utf-8') {
 }
 const ok = (res, body = {}) => send(res, 200, body);
 const bad = (res, msg) => send(res, 400, { error: msg });
+
+/**
+ * Links a file that lives outside the media folder into the library without copying it.
+ * Returns false when the platform refuses symlinks (Windows without developer mode),
+ * so the caller can fall back to a real copy.
+ */
+function linkExternal(src, dest) {
+  try {
+    fs.symlinkSync(src, dest, 'file');
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -600,22 +622,32 @@ const server = http.createServer(async (req, res) => {
       notifyContentChanged();
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
-    // 扫描媒体目录：把直接拷进去的图片/视频批量入库（与网页上传共用同一个目录）
+    // 扫描媒体目录：把直接拷进去的图片/视频批量入库（与网页上传共用同一个目录）。
+    // MEDIA_EXTRA_DIRS 里的文件以软链接方式引用，不复制、不移动、不删除原文件。
     if (p === '/api/media/scan' && req.method === 'GET') {
-      return ok(res, { dir: MEDIA_DIR });
+      return ok(res, { dir: MEDIA_DIR, extraDirs: EXTRA_MEDIA_DIRS });
     }
     if (p === '/api/media/scan' && req.method === 'POST') {
       req.resume();
-      const scanDir = MEDIA_DIR;
-      let st = null;
-      try { st = fs.statSync(scanDir); } catch { /* 目录不存在 */ }
-      if (!st || !st.isDirectory()) return bad(res, `媒体文件夹不可用：${scanDir}`);
-      const MAX_FILES = 200;
+      const scanDirs = [MEDIA_DIR, ...EXTRA_MEDIA_DIRS].filter((dir) => {
+        try { return fs.statSync(dir).isDirectory(); } catch { return false; }
+      });
+      if (!scanDirs.length) return bad(res, `媒体文件夹不可用：${MEDIA_DIR}`);
+
+      const MAX_FILES = 300;
       const files = [];
       let truncated = false;
       let already = 0;
-      const known = db.prepare('SELECT 1 FROM media WHERE filename = ?');
-      const walk = (dir, depth) => {
+      // 一次读出已入库清单，循环里不再逐文件查库；重复扫描可直接跳过，无需再算哈希。
+      const knownNames = new Set(
+        db.prepare('SELECT filename FROM media').all().map((row) => row.filename)
+      );
+      const knownSources = new Set(
+        db.prepare('SELECT source_path FROM media WHERE source_path IS NOT NULL').all()
+          .map((row) => row.source_path)
+      );
+
+      const walk = (dir, root, depth) => {
         if (truncated || depth > 5) return;
         let entries;
         try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -623,27 +655,36 @@ const server = http.createServer(async (req, res) => {
           if (truncated) return;
           if (e.name.startsWith('.')) continue;
           const full = path.join(dir, e.name);
-          if (e.isDirectory()) { walk(full, depth + 1); continue; }
+          if (e.isDirectory()) { walk(full, root, depth + 1); continue; }
           if (!e.isFile() || !kindOf(e.name)) continue;
-          // Files already registered by a previous upload or scan are skipped cheaply.
-          if (path.dirname(path.resolve(full)) === scanDir && known.get(e.name)) { already++; continue; }
-          files.push(full);
+          const resolved = path.resolve(full);
+          if (root === MEDIA_DIR) {
+            // 已入库的文件（上传或上次扫描后改名）直接跳过，不重复读盘
+            if (path.dirname(resolved) === root && knownNames.has(e.name)) { already++; continue; }
+          } else if (knownSources.has(resolved)) {
+            already++;
+            continue;
+          }
+          files.push({ file: resolved, root });
           if (files.length >= MAX_FILES) { truncated = true; return; }
         }
       };
-      walk(scanDir, 0);
+      for (const root of scanDirs) walk(root, root, 0);
+
+      const insertMedia = db.prepare(
+        'INSERT INTO media (filename, orig_name, sha256, kind, size, source_path) VALUES (?,?,?,?,?,?)'
+      );
+      const findDuplicate = db.prepare('SELECT filename FROM media WHERE sha256 = ? AND kind = ?');
 
       let added = 0, skipped = 0, failed = 0;
       const errors = [];
-      for (const file of files) {
-        // 哈希大文件是同步 CPU 操作；每处理完一个文件就让出事件循环一次，
-        // 保证扫描期间电视端的 /api/manifest 与 /api/watch 仍能正常响应。
-        await new Promise((resolve) => setImmediate(resolve));
+
+      const processOne = async ({ file, root }) => {
+        const name = path.basename(file);
+        const kind = kindOf(name);
         try {
-          const name = path.basename(file);
-          const kind = kindOf(name);
           const statSize = fs.statSync(file).size;
-          if (statSize <= 0) { failed++; errors.push(`${name}: 空文件`); continue; }
+          if (statSize <= 0) { failed++; errors.push(`${name}: 空文件`); return; }
           let sha256 = await sha256OfRange(file, 0, statSize - 1);
           let finalSize = statSize;
           let source = file, srcStart = 0, srcEnd = statSize - 1;
@@ -652,10 +693,10 @@ const server = http.createServer(async (req, res) => {
             if (!ffmpegAvailable()) {
               failed++;
               errors.push(`${name}: 旧封装 MKV，请先安装 ffmpeg`);
-              continue;
+              return;
             }
             const rr = await remuxMkv({ tmp: file, start: 0, end: statSize - 1, filename: name });
-            if (rr.error) { failed++; errors.push(`${name}: ${rr.error}`); continue; }
+            if (rr.error) { failed++; errors.push(`${name}: ${rr.error}`); return; }
             source = rr.up.tmp;
             srcStart = rr.up.start;
             srcEnd = rr.up.end;
@@ -663,38 +704,52 @@ const server = http.createServer(async (req, res) => {
             sha256 = await sha256OfRange(source, srcStart, srcEnd);
             fromTemp = true;
           }
-          const dup = db.prepare('SELECT filename FROM media WHERE sha256 = ? AND kind = ?')
-            .get(sha256, kind);
+          const dup = findDuplicate.get(sha256, kind);
           if (dup) {
             if (fromTemp) fs.rmSync(source, { force: true });
             skipped++;
             errors.push(`${name}: 与已入库的 ${dup.filename} 内容重复，原文件已保留`);
-            continue;
+            return;
           }
           const storeName = `${sha256.slice(0, 16)}${path.extname(name).toLowerCase()}`;
-          const target = path.join(scanDir, storeName);
-          if (fs.existsSync(target)) fs.rmSync(target, { force: true });
+          const target = path.join(MEDIA_DIR, storeName);
+          fs.rmSync(target, { force: true });
           if (fromTemp) {
-            // Rename inside the media folder would drop the source, so materialize first.
-            fs.rmSync(file, { force: true });
+            // 重封装后的临时文件在媒体目录里，必须先把内容落盘再删源文件
+            if (root === MEDIA_DIR) fs.rmSync(file, { force: true });
             await copyRange(source, srcStart, srcEnd, target);
             fs.rmSync(source, { force: true });
-          } else if (path.resolve(file) !== path.resolve(target)) {
-            // Same folder rename keeps disk usage unchanged.
-            fs.renameSync(file, target);
+          } else if (root === MEDIA_DIR) {
+            // 同目录改名不额外占空间
+            if (path.resolve(file) !== path.resolve(target)) fs.renameSync(file, target);
+          } else if (!linkExternal(file, target)) {
+            // 软链接不可用（如 Windows 未开开发者模式）时退回复制
+            await copyRange(file, 0, statSize - 1, target);
           }
-          db.prepare('INSERT INTO media (filename, orig_name, sha256, kind, size) VALUES (?,?,?,?,?)')
-            .run(storeName, name.slice(0, 120), sha256, kind, finalSize);
+          insertMedia.run(
+            storeName, name.slice(0, 120), sha256, kind, finalSize,
+            root === MEDIA_DIR ? null : file
+          );
           added++;
         } catch (e) {
           failed++;
-          errors.push(`${path.basename(file)}: ${e.message}`);
+          errors.push(`${name}: ${e.message}`);
         }
+      };
+
+      // 哈希与磁盘读取是主要耗时，4 路并发重叠执行；每批结束让出事件循环，
+      // 保证扫描期间电视端的 /api/manifest 与 /api/watch 仍能正常响应。
+      const CONCURRENCY = 4;
+      for (let i = 0; i < files.length; i += CONCURRENCY) {
+        await Promise.all(files.slice(i, i + CONCURRENCY).map(processOne));
+        await new Promise((resolve) => setImmediate(resolve));
       }
+
       if (added) notifyContentChanged();
-      console.log(`[scan] ${scanDir} 扫描 ${files.length} 个，新增 ${added}，重复 ${skipped}，失败 ${failed}`);
+      console.log(`[scan] ${scanDirs.join(' | ')} 扫描 ${files.length} 个，新增 ${added}，重复 ${skipped}，失败 ${failed}`);
       return ok(res, {
-        dir: scanDir, scanned: files.length, already, added, skipped, failed, truncated,
+        dir: MEDIA_DIR, extraDirs: EXTRA_MEDIA_DIRS, limit: MAX_FILES,
+        scanned: files.length, already, added, skipped, failed, truncated,
         errors: errors.slice(0, 10),
       });
     }

@@ -337,7 +337,11 @@ window.closePreview = () => {
 };
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePreview(); });
 window.delMedia = async (id) => {
-  if (!confirm('删除该媒体？引用它的节目单会自动移除该项。')) return;
+  const target = media.find(m => m.id === id);
+  const hint = target && target.source_path
+    ? `该媒体来自外部文件夹（${target.source_path}），只会从媒体库移除，源文件保留；下次扫描若仍在文件夹中会重新加入。`
+    : '引用它的节目单会自动移除该项。';
+  if (!confirm(`删除该媒体？${hint}`)) return;
   const r = await api('DELETE', '/api/media/' + id);
   toast(r.disabledSchedules ? `已删除，${r.disabledSchedules} 个时段已自动停用` : '已删除');
   load();
@@ -443,7 +447,13 @@ function uploadOne(file, idx, total, items) {
 function loadScanHint() {
   fetch('/api/media/scan', { credentials: 'same-origin' })
     .then(r => (r.ok ? r.json() : null))
-    .then(r => { if (r && r.dir) $('#scanHint').textContent = `媒体文件夹：${r.dir}，把素材拷进去后点击扫描`; })
+    .then(r => {
+      if (!r || !r.dir) return;
+      const extra = (r.extraDirs || []).length
+        ? `；另扫描外部文件夹：${r.extraDirs.join('、')}（软链接引用，不复制文件）`
+        : '';
+      $('#scanHint').textContent = `媒体文件夹：${r.dir}，把素材拷进去后点击扫描${extra}`;
+    })
     .catch(() => {});
 }
 
@@ -455,7 +465,8 @@ $('#scanBtn').onclick = async () => {
     let msg = `扫描 ${r.scanned} 个新文件：新增 ${r.added}，重复 ${r.skipped}`;
     if (r.already) msg += `（已有 ${r.already} 个入库文件跳过）`;
     if (r.failed) msg += `，失败 ${r.failed}`;
-    if (r.truncated) msg += '（单次上限 200 个，请再次扫描）';
+    if (r.truncated) msg += `（单次上限 ${r.limit || 300} 个，请再次扫描）`;
+    if ((r.extraDirs || []).length && r.added) msg += '，外部文件夹已建立软链接';
     toast(msg);
     loadMedia();
     if (r.errors && r.errors.length) console.warn('scan errors:', r.errors);
