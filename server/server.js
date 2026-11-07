@@ -35,9 +35,7 @@ const PORT = process.env.PORT || 8300;
 const MEDIA_DIR = path.join(__dirname, 'media');
 const MAX_UPLOAD_GB = Math.max(1, Number(process.env.MAX_UPLOAD_GB) || 8);
 const MAX_UPLOAD = MAX_UPLOAD_GB * 1024 * 1024 * 1024;
-// Extra folders that may already hold media (NAS mounts, other disks). Files found there are
-// linked into the media library instead of being copied, so scanning stays instant and the
-// originals are left untouched. Multiple folders are separated by the OS path delimiter.
+// 媒体库现在由后台管理；MEDIA_EXTRA_DIRS 仅作为兼容入口，启动时自动注册为媒体库。
 const EXTRA_MEDIA_DIRS = (process.env.MEDIA_EXTRA_DIRS || '')
   .split(path.delimiter)
   .map((dir) => dir.trim())
@@ -471,6 +469,179 @@ async function remuxMkv(up) {
   }
 }
 
+// ---------- 媒体库 ----------
+const MAIN_LIBRARY_ID = db.ensureMainLibrary(MEDIA_DIR);
+
+/** 注册一个媒体库（供环境变量兼容入口使用），已存在则复用。 */
+function registerLibrary(name, dirPath) {
+  const resolved = path.resolve(dirPath);
+  const existing = db.prepare('SELECT id FROM libraries WHERE path = ?').get(resolved);
+  if (existing) return existing.id;
+  const base = (name || path.basename(resolved) || '媒体库').trim().slice(0, 40);
+  let candidate = base;
+  for (let i = 2; db.prepare('SELECT 1 FROM libraries WHERE name = ?').get(candidate); i += 1) {
+    candidate = `${base} (${i})`;
+  }
+  const info = db.prepare('INSERT INTO libraries (name, path) VALUES (?, ?)').run(candidate, resolved);
+  return Number(info.lastInsertRowid);
+}
+
+// 旧的 MEDIA_EXTRA_DIRS 自动登记为媒体库，之后完全由后台管理
+for (const dir of EXTRA_MEDIA_DIRS) registerLibrary(path.basename(dir), dir);
+
+function listLibraries() {
+  return db.prepare(`
+    SELECT l.*, (SELECT COUNT(*) FROM media m WHERE m.library_id = l.id) AS mediaCount
+    FROM libraries l
+    ORDER BY l.is_main DESC, l.id
+  `).all().map((row) => {
+    let exists = false;
+    try { exists = fs.statSync(row.path).isDirectory(); } catch { /* 目录不可访问 */ }
+    return {
+      id: row.id,
+      name: row.name,
+      path: row.path,
+      isMain: !!row.is_main,
+      enabled: !!row.enabled,
+      mediaCount: row.mediaCount,
+      exists,
+    };
+  });
+}
+
+/**
+ * 扫描若干媒体库，把图片/视频登记进 media 表。
+ * 主库是服务端自己的目录，文件直接改名入库；外部库用链接引用，原文件不动。
+ */
+async function scanLibraries(libs) {
+  const MAX_FILES = 300;
+  const files = [];
+  let truncated = false;
+  let already = 0;
+  // 一次读出已入库清单，循环里不再逐文件查库；重复扫描可直接跳过，无需再算哈希。
+  const knownNames = new Set(
+    db.prepare('SELECT filename FROM media').all().map((row) => row.filename)
+  );
+  const knownSources = new Set(
+    db.prepare('SELECT source_path FROM media WHERE source_path IS NOT NULL').all()
+      .map((row) => row.source_path)
+  );
+
+  const walk = (dir, lib, depth) => {
+    if (truncated || depth > 5) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (truncated) return;
+      if (e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(full, lib, depth + 1); continue; }
+      if (!e.isFile() || !kindOf(e.name)) continue;
+      const resolved = path.resolve(full);
+      if (lib.is_main) {
+        // 已入库的文件（上传或上次扫描后改名）直接跳过，不重复读盘
+        if (path.dirname(resolved) === path.resolve(lib.path) && knownNames.has(e.name)) {
+          already++;
+          continue;
+        }
+      } else if (knownSources.has(resolved)) {
+        already++;
+        continue;
+      }
+      files.push({ file: resolved, lib });
+      if (files.length >= MAX_FILES) { truncated = true; return; }
+    }
+  };
+  for (const lib of libs) {
+    let usable = false;
+    try { usable = fs.statSync(lib.path).isDirectory(); } catch { /* 跳过不可访问的库 */ }
+    if (usable) walk(lib.path, lib, 0);
+  }
+
+  const insertMedia = db.prepare(
+    'INSERT INTO media (filename, orig_name, sha256, kind, size, library_id, source_path) VALUES (?,?,?,?,?,?,?)'
+  );
+  const findDuplicate = db.prepare('SELECT filename FROM media WHERE sha256 = ? AND kind = ?');
+
+  let added = 0, skipped = 0, failed = 0;
+  const errors = [];
+
+  const processOne = async ({ file, lib }) => {
+    const name = path.basename(file);
+    const kind = kindOf(name);
+    try {
+      const statSize = fs.statSync(file).size;
+      if (statSize <= 0) { failed++; errors.push(`${name}: 空文件`); return; }
+      let sha256 = await sha256OfRange(file, 0, statSize - 1);
+      let finalSize = statSize;
+      let source = file, srcStart = 0, srcEnd = statSize - 1;
+      let fromTemp = false;
+      if (kind === 'VIDEO' && path.extname(name).toLowerCase() === '.mkv' && isLegacyMkv(file, 0)) {
+        if (!ffmpegAvailable()) {
+          failed++;
+          errors.push(`${name}: 旧封装 MKV，请先安装 ffmpeg`);
+          return;
+        }
+        const rr = await remuxMkv({ tmp: file, start: 0, end: statSize - 1, filename: name });
+        if (rr.error) { failed++; errors.push(`${name}: ${rr.error}`); return; }
+        source = rr.up.tmp;
+        srcStart = rr.up.start;
+        srcEnd = rr.up.end;
+        finalSize = rr.up.size;
+        sha256 = await sha256OfRange(source, srcStart, srcEnd);
+        fromTemp = true;
+      }
+      const dup = findDuplicate.get(sha256, kind);
+      if (dup) {
+        if (fromTemp) fs.rmSync(source, { force: true });
+        skipped++;
+        errors.push(`${name}: 与已入库的 ${dup.filename} 内容重复，原文件已保留`);
+        return;
+      }
+      const storeName = `${sha256.slice(0, 16)}${path.extname(name).toLowerCase()}`;
+      const target = path.join(MEDIA_DIR, storeName);
+      fs.rmSync(target, { force: true });
+      if (fromTemp) {
+        // 重封装后的临时文件在媒体目录里，必须先把内容落盘再删源文件
+        if (lib.is_main) fs.rmSync(file, { force: true });
+        await copyRange(source, srcStart, srcEnd, target);
+        fs.rmSync(source, { force: true });
+      } else if (lib.is_main) {
+        // 同目录改名不额外占空间
+        if (path.resolve(file) !== path.resolve(target)) fs.renameSync(file, target);
+      } else if (!linkExternal(file, target)) {
+        // 软链接不可用（如 Windows 未开开发者模式）时退回复制
+        await copyRange(file, 0, statSize - 1, target);
+      }
+      insertMedia.run(
+        storeName, name.slice(0, 120), sha256, kind, finalSize,
+        lib.id, lib.is_main ? null : file
+      );
+      added++;
+    } catch (e) {
+      failed++;
+      errors.push(`${name}: ${e.message}`);
+    }
+  };
+
+  // 哈希与磁盘读取是主要耗时，4 路并发重叠执行；每批结束让出事件循环，
+  // 保证扫描期间电视端的 /api/manifest 与 /api/watch 仍能正常响应。
+  const CONCURRENCY = 4;
+  for (let i = 0; i < files.length; i += CONCURRENCY) {
+    await Promise.all(files.slice(i, i + CONCURRENCY).map(processOne));
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  if (added) notifyContentChanged();
+  const names = libs.map((lib) => lib.name).join('、');
+  console.log(`[scan] ${names} 扫描 ${files.length} 个，新增 ${added}，重复 ${skipped}，失败 ${failed}`);
+  return {
+    libraries: libs.map((lib) => ({ id: lib.id, name: lib.name })),
+    limit: MAX_FILES, scanned: files.length, already, added, skipped, failed, truncated,
+    errors: errors.slice(0, 10),
+  };
+}
+
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -593,9 +764,84 @@ const server = http.createServer(async (req, res) => {
     const who = requireAuth(req, res);
     if (!who) return send(res, 401, { error: '未登录，请先登录' });
 
-    // ----- 媒体库 -----
+    // ----- 媒体库管理 -----
+    if (p === '/api/libraries' && req.method === 'GET') {
+      return ok(res, listLibraries());
+    }
+    if (p === '/api/libraries' && req.method === 'POST') {
+      const body = await jsonBody(req);
+      const name = String(body.name || '').trim();
+      const rawPath = String(body.path || '').trim();
+      if (!name) return bad(res, '请填写媒体库名称');
+      if (name.length > 40) return bad(res, '名称不能超过 40 个字符');
+      if (!rawPath) return bad(res, '请填写文件夹路径');
+      if (!path.isAbsolute(rawPath)) {
+        return bad(res, '请填写绝对路径，例如 /mnt/nas/videos 或 D:\\Videos');
+      }
+      const resolved = path.resolve(rawPath);
+      let st = null;
+      try { st = fs.statSync(resolved); } catch { /* 目录不存在 */ }
+      if (!st || !st.isDirectory()) return bad(res, `文件夹不存在或不可访问：${resolved}`);
+      if (db.prepare('SELECT 1 FROM libraries WHERE path = ?').get(resolved)) {
+        return bad(res, '这个文件夹已经在媒体库列表里了');
+      }
+      if (db.prepare('SELECT 1 FROM libraries WHERE name = ?').get(name)) {
+        return bad(res, '媒体库名称重复，请换一个');
+      }
+      const info = db.prepare('INSERT INTO libraries (name, path) VALUES (?, ?)').run(name, resolved);
+      console.log(`[library] 新增媒体库 ${name} -> ${resolved}`);
+      return ok(res, { id: Number(info.lastInsertRowid), libraries: listLibraries() });
+    }
+    const libMatch = /^\/api\/libraries\/(\d+)$/.exec(p);
+    if (libMatch && req.method === 'PUT') {
+      const row = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libMatch[1]);
+      if (!row) return send(res, 404, { error: '媒体库不存在' });
+      const body = await jsonBody(req);
+      if (body.name !== undefined) {
+        const name = String(body.name).trim();
+        if (!name) return bad(res, '名称不能为空');
+        if (db.prepare('SELECT 1 FROM libraries WHERE name = ? AND id <> ?').get(name, row.id)) {
+          return bad(res, '媒体库名称重复');
+        }
+        db.prepare('UPDATE libraries SET name = ? WHERE id = ?').run(name.slice(0, 40), row.id);
+      }
+      if (body.enabled !== undefined) {
+        db.prepare('UPDATE libraries SET enabled = ? WHERE id = ?').run(body.enabled ? 1 : 0, row.id);
+      }
+      return ok(res, { libraries: listLibraries() });
+    }
+    if (libMatch && req.method === 'DELETE') {
+      const row = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libMatch[1]);
+      if (!row) return send(res, 404, { error: '媒体库不存在' });
+      if (row.is_main) return bad(res, '主媒体库不能删除');
+      const items = db.prepare('SELECT id, filename FROM media WHERE library_id = ?').all(row.id);
+      let disabledSchedules = 0;
+      for (const item of items) {
+        db.prepare('DELETE FROM media WHERE id = ?').run(item.id);
+        disabledSchedules += detachFromSchedules((it) => it.mediaId === item.id);
+        // 只删媒体目录里的引用或副本，外部库的源文件保持原样
+        fs.rmSync(path.join(MEDIA_DIR, item.filename), { force: true });
+      }
+      db.prepare('DELETE FROM libraries WHERE id = ?').run(row.id);
+      if (items.length) notifyContentChanged();
+      console.log(`[library] 删除媒体库 ${row.name}，移除 ${items.length} 个媒体`);
+      return ok(res, { removedMedia: items.length, disabledSchedules });
+    }
+    const libScan = /^\/api\/libraries\/(\d+)\/scan$/.exec(p);
+    if (libScan && req.method === 'POST') {
+      req.resume();
+      const lib = db.prepare('SELECT id, name, path, is_main FROM libraries WHERE id = ?').get(libScan[1]);
+      if (!lib) return send(res, 404, { error: '媒体库不存在' });
+      return ok(res, await scanLibraries([lib]));
+    }
+
+    // ----- 媒体 -----
     if (p === '/api/media' && req.method === 'GET') {
-      return ok(res, db.prepare('SELECT * FROM media ORDER BY id DESC').all());
+      return ok(res, db.prepare(`
+        SELECT m.*, l.name AS libraryName, l.is_main AS libraryIsMain
+        FROM media m LEFT JOIN libraries l ON l.id = m.library_id
+        ORDER BY m.id DESC
+      `).all());
     }
     if (p === '/api/media' && req.method === 'POST') {
       // Browsers send Content-Length for multipart uploads, so oversize files are rejected
@@ -647,141 +893,22 @@ const server = http.createServer(async (req, res) => {
       // Same-folder rename: the file is never copied a second time.
       fs.renameSync(pendingPath, target);
       const info = db.prepare(
-        'INSERT INTO media (filename, orig_name, sha256, kind, size) VALUES (?,?,?,?,?)'
-      ).run(storeName, up.filename.slice(0, 120), sha256, kind, up.size);
+        'INSERT INTO media (filename, orig_name, sha256, kind, size, library_id) VALUES (?,?,?,?,?,?)'
+      ).run(storeName, up.filename.slice(0, 120), sha256, kind, up.size, MAIN_LIBRARY_ID);
       notifyContentChanged();
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
-    // 扫描媒体目录：把直接拷进去的图片/视频批量入库（与网页上传共用同一个目录）。
-    // MEDIA_EXTRA_DIRS 里的文件以软链接方式引用，不复制、不移动、不删除原文件。
+    // 扫描全部启用中的媒体库
     if (p === '/api/media/scan' && req.method === 'GET') {
-      return ok(res, { dir: MEDIA_DIR, extraDirs: EXTRA_MEDIA_DIRS });
+      return ok(res, { libraries: listLibraries() });
     }
     if (p === '/api/media/scan' && req.method === 'POST') {
       req.resume();
-      const scanDirs = [MEDIA_DIR, ...EXTRA_MEDIA_DIRS].filter((dir) => {
-        try { return fs.statSync(dir).isDirectory(); } catch { return false; }
-      });
-      if (!scanDirs.length) return bad(res, `媒体文件夹不可用：${MEDIA_DIR}`);
-
-      const MAX_FILES = 300;
-      const files = [];
-      let truncated = false;
-      let already = 0;
-      // 一次读出已入库清单，循环里不再逐文件查库；重复扫描可直接跳过，无需再算哈希。
-      const knownNames = new Set(
-        db.prepare('SELECT filename FROM media').all().map((row) => row.filename)
-      );
-      const knownSources = new Set(
-        db.prepare('SELECT source_path FROM media WHERE source_path IS NOT NULL').all()
-          .map((row) => row.source_path)
-      );
-
-      const walk = (dir, root, depth) => {
-        if (truncated || depth > 5) return;
-        let entries;
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-        for (const e of entries) {
-          if (truncated) return;
-          if (e.name.startsWith('.')) continue;
-          const full = path.join(dir, e.name);
-          if (e.isDirectory()) { walk(full, root, depth + 1); continue; }
-          if (!e.isFile() || !kindOf(e.name)) continue;
-          const resolved = path.resolve(full);
-          if (root === MEDIA_DIR) {
-            // 已入库的文件（上传或上次扫描后改名）直接跳过，不重复读盘
-            if (path.dirname(resolved) === root && knownNames.has(e.name)) { already++; continue; }
-          } else if (knownSources.has(resolved)) {
-            already++;
-            continue;
-          }
-          files.push({ file: resolved, root });
-          if (files.length >= MAX_FILES) { truncated = true; return; }
-        }
-      };
-      for (const root of scanDirs) walk(root, root, 0);
-
-      const insertMedia = db.prepare(
-        'INSERT INTO media (filename, orig_name, sha256, kind, size, source_path) VALUES (?,?,?,?,?,?)'
-      );
-      const findDuplicate = db.prepare('SELECT filename FROM media WHERE sha256 = ? AND kind = ?');
-
-      let added = 0, skipped = 0, failed = 0;
-      const errors = [];
-
-      const processOne = async ({ file, root }) => {
-        const name = path.basename(file);
-        const kind = kindOf(name);
-        try {
-          const statSize = fs.statSync(file).size;
-          if (statSize <= 0) { failed++; errors.push(`${name}: 空文件`); return; }
-          let sha256 = await sha256OfRange(file, 0, statSize - 1);
-          let finalSize = statSize;
-          let source = file, srcStart = 0, srcEnd = statSize - 1;
-          let fromTemp = false;
-          if (kind === 'VIDEO' && path.extname(name).toLowerCase() === '.mkv' && isLegacyMkv(file, 0)) {
-            if (!ffmpegAvailable()) {
-              failed++;
-              errors.push(`${name}: 旧封装 MKV，请先安装 ffmpeg`);
-              return;
-            }
-            const rr = await remuxMkv({ tmp: file, start: 0, end: statSize - 1, filename: name });
-            if (rr.error) { failed++; errors.push(`${name}: ${rr.error}`); return; }
-            source = rr.up.tmp;
-            srcStart = rr.up.start;
-            srcEnd = rr.up.end;
-            finalSize = rr.up.size;
-            sha256 = await sha256OfRange(source, srcStart, srcEnd);
-            fromTemp = true;
-          }
-          const dup = findDuplicate.get(sha256, kind);
-          if (dup) {
-            if (fromTemp) fs.rmSync(source, { force: true });
-            skipped++;
-            errors.push(`${name}: 与已入库的 ${dup.filename} 内容重复，原文件已保留`);
-            return;
-          }
-          const storeName = `${sha256.slice(0, 16)}${path.extname(name).toLowerCase()}`;
-          const target = path.join(MEDIA_DIR, storeName);
-          fs.rmSync(target, { force: true });
-          if (fromTemp) {
-            // 重封装后的临时文件在媒体目录里，必须先把内容落盘再删源文件
-            if (root === MEDIA_DIR) fs.rmSync(file, { force: true });
-            await copyRange(source, srcStart, srcEnd, target);
-            fs.rmSync(source, { force: true });
-          } else if (root === MEDIA_DIR) {
-            // 同目录改名不额外占空间
-            if (path.resolve(file) !== path.resolve(target)) fs.renameSync(file, target);
-          } else if (!linkExternal(file, target)) {
-            // 软链接不可用（如 Windows 未开开发者模式）时退回复制
-            await copyRange(file, 0, statSize - 1, target);
-          }
-          insertMedia.run(
-            storeName, name.slice(0, 120), sha256, kind, finalSize,
-            root === MEDIA_DIR ? null : file
-          );
-          added++;
-        } catch (e) {
-          failed++;
-          errors.push(`${name}: ${e.message}`);
-        }
-      };
-
-      // 哈希与磁盘读取是主要耗时，4 路并发重叠执行；每批结束让出事件循环，
-      // 保证扫描期间电视端的 /api/manifest 与 /api/watch 仍能正常响应。
-      const CONCURRENCY = 4;
-      for (let i = 0; i < files.length; i += CONCURRENCY) {
-        await Promise.all(files.slice(i, i + CONCURRENCY).map(processOne));
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-
-      if (added) notifyContentChanged();
-      console.log(`[scan] ${scanDirs.join(' | ')} 扫描 ${files.length} 个，新增 ${added}，重复 ${skipped}，失败 ${failed}`);
-      return ok(res, {
-        dir: MEDIA_DIR, extraDirs: EXTRA_MEDIA_DIRS, limit: MAX_FILES,
-        scanned: files.length, already, added, skipped, failed, truncated,
-        errors: errors.slice(0, 10),
-      });
+      const targets = db.prepare(
+        'SELECT id, name, path, is_main FROM libraries WHERE enabled = 1 ORDER BY is_main DESC, id'
+      ).all();
+      if (!targets.length) return bad(res, '没有启用中的媒体库');
+      return ok(res, await scanLibraries(targets));
     }
     let m = /^\/api\/media\/(\d+)$/.exec(p);
     if (m && req.method === 'DELETE') {

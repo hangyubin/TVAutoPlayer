@@ -95,14 +95,21 @@
 
 <section id="tab-media" class="card">
   <h2>媒体库</h2>
-  <div class="row">
-    <input type="file" id="file" class="grow" accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.heif,.mp4,.mkv,.webm,.ts,.m4v,.mov" multiple>
-    <button class="btn" id="uploadBtn">上传</button>
-    <button class="btn sub" id="uploadCancel" style="display:none">取消</button>
+  <div id="libList"></div>
+  <div class="row" style="margin-top:8px">
+    <input id="libName" class="grow" placeholder="媒体库名称，如 广告素材">
+    <input id="libPath" class="grow" placeholder="文件夹绝对路径，如 D:\Videos 或 /mnt/nas/videos">
+    <button class="btn" id="libAdd">添加媒体库</button>
   </div>
+  <p class="muted" style="margin:6px 0 0">外部文件夹只建立链接引用，不复制、不移动原文件；删除媒体库不会删除磁盘上的源文件。</p>
   <div class="row" style="margin-top:8px">
     <span class="muted grow" id="scanHint">把素材直接拷入服务器媒体文件夹后点击扫描</span>
-    <button class="btn sub" id="scanBtn">扫描媒体文件夹</button>
+    <button class="btn sub" id="scanBtn">扫描全部</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input type="file" id="file" class="grow" accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.heif,.mp4,.mkv,.webm,.ts,.m4v,.mov" multiple>
+    <button class="btn" id="uploadBtn">上传到主库</button>
+    <button class="btn sub" id="uploadCancel" style="display:none">取消</button>
   </div>
   <div id="uploadBox">
     <div class="bar-track"><div class="bar-fill indeterminate" id="barFill"></div></div>
@@ -115,7 +122,7 @@
   <p class="muted" style="margin:8px 0">支持 jpg/png/webp/bmp/heic 图片，mp4/mkv/webm/ts 视频；按内容哈希去重。</p>
   <table><thead><tr>
     <th style="width:60px">缩略图</th><th>文件名</th><th style="width:70px">类型</th>
-    <th style="width:90px">大小</th><th style="width:130px">操作</th>
+    <th style="width:110px">媒体库</th><th style="width:90px">大小</th><th style="width:130px">操作</th>
   </tr></thead><tbody id="mediaList"></tbody></table>
 </section>
 
@@ -301,18 +308,36 @@ async function loadMedia() {
     return `<tr>
       <td>${thumb}</td><td title="${esc(m.orig_name)}">${esc(m.orig_name)}</td>
       <td><span class="tag ${m.kind==='IMAGE'?'img':'vid'}">${m.kind==='IMAGE'?'图片':'视频'}</span></td>
+      <td><span class="tag ${m.libraryIsMain ? 'img' : 'vid'}">${esc(m.libraryName || '主库')}</span></td>
       <td>${fmtSize(m.size)}</td>
       <td><button class="btn sub" onclick="openPreview('${url}', '${m.kind}')">预览</button>
           <button class="btn warn" onclick="delMedia(${m.id})">删除</button></td></tr>`;
   }).join('');
+  await loadLibraries();
   $('#schMedia').innerHTML = schedOptionsHtml();
 }
-const mediaOptionsHtml = () =>
-  media.map(m => `<option value="${m.id}">[${m.kind==='IMAGE'?'图':'视'}] ${esc(m.orig_name)}</option>`).join('');
+// 按媒体库分组，节目单/时段下拉里能直接看出素材来自哪个库
+function groupMedia() {
+  const groups = new Map();
+  for (const m of media) {
+    const key = m.libraryName || '主媒体库';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  }
+  return groups;
+}
+const mediaOptionsHtml = () => Array.from(groupMedia().entries()).map(([name, list]) =>
+  `<optgroup label="${esc(name)}">` +
+  list.map(m => `<option value="${m.id}">[${m.kind==='IMAGE'?'图':'视'}] ${esc(m.orig_name)}</option>`).join('') +
+  '</optgroup>'
+).join('');
 // 时段下拉：媒体 + 直播源（live: 前缀区分）
 const schedOptionsHtml = () =>
   mediaOptionsHtml() +
-  lives.map(s => `<option value="live:${s.id}">[直播] ${esc(s.name)}${s.enabled?'':'（停用）'}</option>`).join('');
+  (lives.length
+    ? `<optgroup label="直播源">${lives.map(s =>
+        `<option value="live:${s.id}">[直播] ${esc(s.name)}${s.enabled?'':'（停用）'}</option>`).join('')}</optgroup>`
+    : '');
 const mediaNameOf = (id) => {
   const m = media.find(x => x.id === id);
   return m ? m.orig_name : `#${id}（已删除）`;
@@ -448,14 +473,77 @@ function loadScanHint() {
   fetch('/api/media/scan', { credentials: 'same-origin' })
     .then(r => (r.ok ? r.json() : null))
     .then(r => {
-      if (!r || !r.dir) return;
-      const extra = (r.extraDirs || []).length
-        ? `；另扫描外部文件夹：${r.extraDirs.join('、')}（软链接引用，不复制文件）`
-        : '';
-      $('#scanHint').textContent = `媒体文件夹：${r.dir}，把素材拷进去后点击扫描${extra}`;
+      if (!r || !r.libraries) return;
+      const dirs = r.libraries.map(l => l.isMain ? `${l.name}（服务端 media 目录）` : l.name);
+      $('#scanHint').textContent = `已启用媒体库：${dirs.join('、')}。点「扫描全部」按库批量入库`;
     })
     .catch(() => {});
 }
+
+// ----- 媒体库管理 -----
+let libraries = [];
+async function loadLibraries() {
+  libraries = await api('GET', '/api/libraries');
+  renderLibraries();
+  $('#schMedia').innerHTML = schedOptionsHtml();
+}
+function libraryTag(l) {
+  return `<span class="tag ${l.isMain ? 'img' : 'vid'}" title="${esc(l.path)}">${l.isMain ? '主库' : '外部'}</span>`;
+}
+function renderLibraries() {
+  $('#libList').innerHTML = libraries.map(l => `
+    <div class="row" style="margin-top:6px;border:1px solid #e3e5e7;border-radius:6px;padding:8px;align-items:center">
+      ${libraryTag(l)}
+      <span class="grow" style="min-width:0">
+        <b>${esc(l.name)}</b>
+        <span class="muted" style="margin-left:8px;word-break:break-all">${esc(l.path)}</span>
+        <br><span class="muted">${l.mediaCount} 个媒体${l.enabled ? '' : ' · 已停用'}${l.exists ? '' : ' · 目录不可访问'}</span>
+      </span>
+      <button class="btn sub" onclick="scanLibrary(${l.id})">扫描</button>
+      ${l.isMain ? '' : `<button class="btn warn" onclick="delLibrary(${l.id})">删除</button>`}
+    </div>`).join('');
+}
+window.scanLibrary = async (id) => {
+  const lib = libraries.find(l => l.id === id);
+  try {
+    const r = await api('POST', `/api/libraries/${id}/scan`, {});
+    let msg = `${lib ? lib.name : '媒体库'}：扫描 ${r.scanned} 个，新增 ${r.added}，重复 ${r.skipped}`;
+    if (r.already) msg += `，已入库跳过 ${r.already}`;
+    if (r.failed) msg += `，失败 ${r.failed}`;
+    if (r.truncated) msg += `（单次上限 ${r.limit} 个，请再次扫描）`;
+    toast(msg);
+    await loadMedia();
+    await loadLibraries();
+    if (r.errors && r.errors.length) console.warn('scan errors:', r.errors);
+  } catch (e) { /* api() 已提示原因 */ }
+};
+window.delLibrary = async (id) => {
+  const lib = libraries.find(l => l.id === id);
+  if (!confirm(`删除媒体库「${lib ? lib.name : id}」？\n库内的 ${lib ? lib.mediaCount : ''} 个媒体会从媒体库和节目单中移除，外部源文件不会被删除。`)) return;
+  try {
+    const r = await api('DELETE', `/api/libraries/${id}`);
+    let msg = `已删除媒体库与 ${r.removedMedia} 个媒体`;
+    if (r.disabledSchedules) msg += `，${r.disabledSchedules} 个时段因内容被清空而停用`;
+    toast(msg);
+    await loadMedia();
+    await loadLibraries();
+    loadProgram();
+    loadSchedules();
+  } catch (e) { /* api() 已提示原因 */ }
+};
+$('#libAdd').onclick = async () => {
+  const name = $('#libName').value.trim();
+  const dir = $('#libPath').value.trim();
+  if (!name) return toast('请填写媒体库名称');
+  if (!dir) return toast('请填写文件夹绝对路径');
+  try {
+    const r = await api('POST', '/api/libraries', { name, path: dir });
+    $('#libName').value = ''; $('#libPath').value = '';
+    libraries = r.libraries;
+    renderLibraries();
+    toast(`媒体库「${name}」已添加，点「扫描」导入其中的媒体`);
+  } catch (e) { /* api() 已提示原因 */ }
+};
 
 $('#scanBtn').onclick = async () => {
   const btn = $('#scanBtn');
@@ -466,14 +554,14 @@ $('#scanBtn').onclick = async () => {
     if (r.already) msg += `（已有 ${r.already} 个入库文件跳过）`;
     if (r.failed) msg += `，失败 ${r.failed}`;
     if (r.truncated) msg += `（单次上限 ${r.limit || 300} 个，请再次扫描）`;
-    if ((r.extraDirs || []).length && r.added) msg += '，外部文件夹已建立软链接';
     toast(msg);
-    loadMedia();
+    await loadMedia();
+    await loadLibraries();
     if (r.errors && r.errors.length) console.warn('scan errors:', r.errors);
   } catch (e) {
     // api() already toasts the reason.
   } finally {
-    btn.disabled = false; btn.textContent = '扫描媒体文件夹';
+    btn.disabled = false; btn.textContent = '扫描全部';
   }
 };
 
@@ -564,12 +652,17 @@ progList.addEventListener('drop', (e) => {
 });
 // 批量添加：勾选媒体库内容，一键追加到节目单末尾（点「保存」后生效）
 function renderPicker() {
-  $('#progPickList').innerHTML = media.map(m => `
-    <label style="display:flex;gap:8px;align-items:center;padding:4px 2px;cursor:pointer">
-      <input type="checkbox" value="${m.id}">
-      <span class="tag ${m.kind==='IMAGE'?'img':'vid'}">${m.kind==='IMAGE'?'图片':'视频'}</span>
-      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m.orig_name)}">${esc(m.orig_name)}</span>
-    </label>`).join('') || '<p class="muted">媒体库为空，请先到「媒体库」上传</p>';
+  const groups = groupMedia();
+  $('#progPickList').innerHTML = groups.size
+    ? Array.from(groups.entries()).map(([name, list]) => `
+      <div class="muted" style="margin:8px 0 2px;font-weight:600">${esc(name)}</div>
+      ${list.map(m => `
+        <label style="display:flex;gap:8px;align-items:center;padding:4px 2px;cursor:pointer">
+          <input type="checkbox" value="${m.id}">
+          <span class="tag ${m.kind==='IMAGE'?'img':'vid'}">${m.kind==='IMAGE'?'图片':'视频'}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m.orig_name)}">${esc(m.orig_name)}</span>
+        </label>`).join('')}`).join('')
+    : '<p class="muted">媒体库为空，请先到「媒体库」上传或扫描</p>';
 }
 $('#progPickToggle').onclick = () => {
   const p = $('#progPicker');

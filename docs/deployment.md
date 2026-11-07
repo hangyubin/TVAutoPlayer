@@ -2,7 +2,7 @@
 
 ## 测试部署
 
-1. 从 [GitHub Release v1.7.0](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.7.0) 下载 `TVAutoPlayer-v1.7.0-debug.apk` 并复制到 U 盘。
+1. 从 [GitHub Release v1.8.0](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.8.0) 下载 `TVAutoPlayer-v1.8.0-debug.apk` 并复制到 U 盘。
 2. 电视开启“允许安装未知来源应用”。
 3. 安装 APK，首次打开后授予照片和视频只读权限，在内置媒体库中选择图片或视频。
 4. 在电视的应用/电池/后台管理中允许本应用自启动和后台运行。
@@ -140,36 +140,24 @@ loginctl enable-linger "$USER"
 - 扫描会递归子目录（最多 5 层），旧封装 MKV 自动重封装（需要 ffmpeg）。
 - 单次最多处理 300 个新文件，超出会提示再次扫描。
 
-#### 把其它文件夹也加入媒体库
+#### 添加其它媒体库（后台操作，无需改配置）
 
-素材已经在 NAS、移动硬盘或别的磁盘上时，不用复制，用环境变量 `MEDIA_EXTRA_DIRS` 把这些目录挂进媒体库：
+素材已经在 NAS、移动硬盘或别的磁盘上时，不用复制、不用改环境变量，直接在后台添加：
 
-```bash
-# Linux / macOS：多个目录用冒号分隔
-MEDIA_EXTRA_DIRS="/mnt/nas/ads:/data/videos" node server.js
-```
+1. 进入「媒体库」页，在顶部两个输入框填写**库名称**（如「广告素材」）和**文件夹绝对路径**（如 `D:\Videos`、`/mnt/nas/ads`）。
+2. 点「添加媒体库」，列表里会出现这张库卡片，显示路径和媒体数量。
+3. 点该卡片的「扫描」即导入；点「扫描全部」会一次扫描所有启用中的库。
 
-Windows 绿色包不用改 `.bat`，直接编辑解压目录里的 `config.env`：
-
-```ini
-# TVAutoPlayer-Server\config.env
-MEDIA_EXTRA_DIRS=D:\Videos;E:\广告素材
-```
-
-保存后重新双击 `启动服务.bat` 即可。`config.env` 里还可以配置 `PORT`、`MAX_UPLOAD_GB`，规则是每行一个 `KEY=VALUE`，`#` 开头为注释，值不要加引号；系统环境变量里已有的同名项优先。
-
-systemd 部署时加到服务的环境变量里：
-
-```ini
-Environment=MEDIA_EXTRA_DIRS=/mnt/nas/ads:/data/videos
-```
+之后在「节目单」和「时段」里挑选内容时，下拉框按媒体库分组，可以混用不同库的素材。
 
 要点：
 
 - 外部目录里的文件会以**软链接**放入 `media/`，不复制、不移动、不删除原文件，扫描大目录几乎瞬时完成。
 - 原文件被删除或移动后，对应节目会播放失败，重新扫描一次即可同步。
-- 删除这类媒体只会从媒体库移除（源文件保留）；只要文件还在外部目录里，下次扫描会重新加入。
+- 删除单个媒体只会从媒体库移除（源文件保留）；只要文件还在外部目录里，下次扫描会重新加入。
+- 「删除媒体库」会移除该库的所有媒体并自动从节目单、时段中剔除，**不会删除磁盘上的源文件**；主媒体库不能删除。
 - 外部目录里如果和库中已有内容完全一致，会按内容哈希判重并跳过。
+- 兼容旧配置：仍可设置环境变量 `MEDIA_EXTRA_DIRS`（`config.env` 或 systemd），启动时会自动登记为媒体库，之后同样在后台管理。
 
 #### Windows 上的软链接权限
 
