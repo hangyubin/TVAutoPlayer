@@ -41,6 +41,16 @@ $env:GRADLE_USER_HOME = $gradleHome
 Push-Location $buildRoot
 try {
     & .\scripts\validate-localization.ps1
+    # 首次构建要从 services.gradle.org 下载 Gradle 发行包，托管机房的出口偶发长时间无响应，
+    # wrapper 会直接抛 SocketTimeoutException。先单独预取并重试，避免整轮构建因一次网络抖动失败。
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        & .\gradlew.bat --version --console=plain --no-daemon
+        if ($LASTEXITCODE -eq 0) { break }
+        if ($attempt -eq 3) {
+            throw 'Gradle distribution download failed after 3 attempts'
+        }
+        Start-Sleep -Seconds 10
+    }
     & .\gradlew.bat clean testDebugUnitTest lintDebug assembleDebug --console=plain --no-daemon
     if ($LASTEXITCODE -ne 0) {
         throw "Gradle build failed with exit code $LASTEXITCODE"
