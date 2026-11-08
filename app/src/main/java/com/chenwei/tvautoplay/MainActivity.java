@@ -22,6 +22,7 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.OptIn;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
+import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
@@ -83,7 +84,9 @@ public final class MainActivity extends ComponentActivity {
     private final SharedPreferences.OnSharedPreferenceChangeListener preferenceChangeListener =
             (prefs, key) -> {
                 if (PlaybackConfigStore.KEY_AUDIO_TRACK_INDEX.equals(key)) {
-                    applySavedAudioTrackOverride();
+                    // Only confirm on screen for edits made in the settings screen; the remote
+                    // control path confirms itself and would otherwise show the toast twice.
+                    applySavedAudioTrackOverride(settingsOpen);
                 } else if (PlaybackConfigStore.KEY_SOUND.equals(key)
                         || PlaybackConfigStore.KEY_SCALE_MODE.equals(key)) {
                     applyDisplayPreferences(configStore.load());
@@ -97,6 +100,14 @@ public final class MainActivity extends ComponentActivity {
     private int consecutivePlaybackFailures;
     private int activePlaylistSize;
     private String activePlaylistSourceId;
+    /**
+     * Highest audio track count seen for the current media item. Tracks are published a moment
+     * after playback starts, so opening settings too early would otherwise offer no track choices.
+     */
+    private int lastKnownAudioTrackCount;
+    private int lastAudioTrackMediaIndex = C.INDEX_UNSET;
+    /** The "no decodable audio" warning is shown once per media item, not on every track update. */
+    private boolean audioUndecodableNotified;
     /** Schedule whose items all failed and fell back to the default program. */
     private String failedScheduleId;
     /** Earliest time the failed schedule may be retried by the 30 s tick. */
@@ -797,8 +808,10 @@ public final class MainActivity extends ComponentActivity {
         }
         settingsOpen = true;
         Intent intent = new Intent(this, SettingsActivity.class);
+        // Tracks may not be published yet right after a switch; fall back to the last known count
+        // so the picker still offers the available tracks instead of only "automatic".
         intent.putExtra(SettingsActivity.EXTRA_CURRENT_AUDIO_TRACK_COUNT,
-                audioTrackEntries().size());
+                Math.max(audioTrackEntries().size(), lastKnownAudioTrackCount));
         settingsLauncher.launch(intent);
     }
 
@@ -849,7 +862,9 @@ public final class MainActivity extends ComponentActivity {
             public void onTracksChanged(Tracks tracks) {
                 // Tracks are only published after the renderers have probed the media,
                 // which can happen slightly after STATE_READY. This is the reliable hook.
+                rememberAudioTrackCount();
                 applySavedAudioTrackOverride();
+                warnIfAudioUndecodable();
             }
         });
         playerView.setFocusable(true);
@@ -911,26 +926,127 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void selectAudioTrack(int index) {
-        if (player == null) return;
+        if (player == null) {
+            toast(getString(R.string.audio_track_player_not_ready));
+            return;
+        }
         List<AudioTrackRef> entries = audioTrackEntries();
-        if (index >= entries.size()) return;
+        if (entries.isEmpty()) {
+            toast(getString(R.string.audio_track_not_ready));
+            return;
+        }
+        if (index >= entries.size()) {
+            toast(getString(R.string.audio_track_out_of_range, entries.size()));
+            return;
+        }
         AudioTrackRef ref = entries.get(index);
-        if (!ref.group.isTrackSupported(ref.indexInGroup)) return;
+        if (!ref.group.isTrackSupported(ref.indexInGroup)) {
+            toast(getString(R.string.audio_track_unsupported, index + 1, describeAudioTrack(ref)));
+            return;
+        }
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
                         .setOverrideForType(new TrackSelectionOverride(
                                 ref.group.getMediaTrackGroup(), ref.indexInGroup))
                         .build());
         configStore.setPreferredAudioTrackIndex(index);
+        toast(getString(R.string.audio_track_switched, index + 1, entries.size(),
+                describeAudioTrack(ref)));
     }
 
     private void resetAudioTrackToDefault() {
-        if (player == null) return;
+        if (player == null) {
+            toast(getString(R.string.audio_track_player_not_ready));
+            return;
+        }
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
                         .clearOverrides()
                         .build());
         configStore.setPreferredAudioTrackIndex(-1);
+        toast(getString(R.string.audio_track_reset_done));
+    }
+
+    /** Short human-readable suffix such as " · Chinese / ac-3"; empty when nothing is announced. */
+    private String describeAudioTrack(AudioTrackRef ref) {
+        Format format = ref.group.getTrackFormat(ref.indexInGroup);
+        List<String> parts = new ArrayList<>();
+        if (format.label != null && !format.label.trim().isEmpty()) {
+            parts.add(format.label.trim());
+        }
+        if (format.language != null && !format.language.trim().isEmpty()) {
+            parts.add(format.language.trim());
+        }
+        String codec = format.codecs != null && !format.codecs.trim().isEmpty()
+                ? format.codecs.trim()
+                : format.sampleMimeType;
+        if (codec != null && !codec.trim().isEmpty()) {
+            parts.add(codec.trim());
+        }
+        if (parts.isEmpty()) {
+            return "";
+        }
+        StringBuilder joined = new StringBuilder(" · ");
+        for (int i = 0; i < parts.size(); i++) {
+            if (i > 0) {
+                joined.append(" / ");
+            }
+            joined.append(parts.get(i));
+        }
+        return joined.toString();
+    }
+
+    /** Remembers how many audio tracks the current item exposes, so settings can list them. */
+    private void rememberAudioTrackCount() {
+        if (player == null) {
+            return;
+        }
+        int mediaIndex = player.getCurrentMediaItemIndex();
+        if (mediaIndex != lastAudioTrackMediaIndex) {
+            lastAudioTrackMediaIndex = mediaIndex;
+            lastKnownAudioTrackCount = 0;
+            audioUndecodableNotified = false;
+        }
+        int count = audioTrackEntries().size();
+        if (count > lastKnownAudioTrackCount) {
+            lastKnownAudioTrackCount = count;
+        }
+    }
+
+    /**
+     * The container can expose audio tracks this device has no decoder for (AC-3 on a TV without
+     * a Dolby licence is the common case). ExoPlayer then plays the video silently and reports no
+     * error at all, which is indistinguishable from "switching the audio track does nothing".
+     * Non-decodable tracks are never selected, so an audio group with no selected track means the
+     * silence is a codec problem. Warn once per item and name the codec.
+     */
+    private void warnIfAudioUndecodable() {
+        if (player == null || audioUndecodableNotified) {
+            return;
+        }
+        String codec = null;
+        for (Tracks.Group group : player.getCurrentTracks().getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_AUDIO) {
+                continue;
+            }
+            for (int i = 0; i < group.length; i++) {
+                if (group.isTrackSelected(i)) {
+                    return; // A decodable track is playing; nothing to warn about.
+                }
+            }
+            if (codec == null) {
+                codec = describeAudioTrack(new AudioTrackRef(group, 0));
+            }
+        }
+        if (codec == null) {
+            return; // The item simply has no audio stream at all.
+        }
+        audioUndecodableNotified = true;
+        toast(getString(R.string.audio_track_none_decodable, codec));
+    }
+
+    private void toast(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
     /**
@@ -947,20 +1063,67 @@ public final class MainActivity extends ComponentActivity {
 
     /** Applies the previously chosen audio track whenever the track list becomes available. */
     private void applySavedAudioTrackOverride() {
-        if (player == null) return;
+        applySavedAudioTrackOverride(false);
+    }
+
+    /**
+     * Applies the saved audio track. {@code userInitiated} marks a change made from the settings
+     * screen, which should always confirm on screen instead of silently doing nothing.
+     */
+    private void applySavedAudioTrackOverride(boolean userInitiated) {
+        if (player == null) {
+            if (userInitiated) {
+                toast(getString(R.string.audio_track_player_not_ready));
+            }
+            return;
+        }
         int saved = configStore.preferredAudioTrackIndex();
-        if (saved < 0) return;
+        if (saved < 0) {
+            // "Automatic" must also drop a manual override, otherwise the previously picked
+            // track would keep winning. Only react to explicit user edits to avoid churn.
+            if (userInitiated) {
+                player.setTrackSelectionParameters(
+                        player.getTrackSelectionParameters().buildUpon()
+                                .clearOverrides()
+                                .build());
+                toast(getString(R.string.audio_track_reset_done));
+            }
+            return;
+        }
         List<AudioTrackRef> entries = audioTrackEntries();
-        if (saved >= entries.size()) return;
+        if (saved >= entries.size()) {
+            if (userInitiated) {
+                toast(entries.isEmpty()
+                        ? getString(R.string.audio_track_not_ready)
+                        : getString(R.string.audio_track_out_of_range, entries.size()));
+            }
+            return;
+        }
         AudioTrackRef ref = entries.get(saved);
-        if (!ref.group.isTrackSupported(ref.indexInGroup)) return;
+        if (!ref.group.isTrackSupported(ref.indexInGroup)) {
+            if (userInitiated) {
+                toast(getString(R.string.audio_track_unsupported, saved + 1,
+                        describeAudioTrack(ref)));
+            }
+            return;
+        }
         // Already applied -> skip to avoid unnecessary override churn.
-        if (ref.group.isTrackSelected(ref.indexInGroup)) return;
+        if (ref.group.isTrackSelected(ref.indexInGroup)) {
+            if (userInitiated) {
+                toast(getString(R.string.audio_track_switched, saved + 1, entries.size(),
+                        describeAudioTrack(ref)));
+            }
+            return;
+        }
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
                         .setOverrideForType(new TrackSelectionOverride(
                                 ref.group.getMediaTrackGroup(), ref.indexInGroup))
                         .build());
+        if (userInitiated) {
+            toast(getString(R.string.audio_track_switched, saved + 1, entries.size(),
+                    describeAudioTrack(ref)));
+        }
     }
 
     @SuppressWarnings("deprecation")
