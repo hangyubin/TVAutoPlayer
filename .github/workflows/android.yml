@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -36,3 +36,62 @@ jobs:
           name: TVAutoPlayer-debug
           path: dist/TVAutoPlayer-v*-debug.apk
           if-no-files-found: error
+
+      # 版本号取自 app/build.gradle.kts，更新说明取自 CHANGELOG.md 中对应版本的章节，
+      # 这样发版时不用再手写一遍，改了 changelog 就等于写好了 release notes。
+      - name: Collect version and release notes
+        id: release
+        shell: pwsh
+        run: |
+          $gradleFile = Join-Path $PWD 'app\build.gradle.kts'
+          $version = [regex]::Match((Get-Content -LiteralPath $gradleFile -Raw), 'versionName\s*=\s*"([^"]+)"').Groups[1].Value
+          if (-not $version) { throw 'Unable to read versionName from app/build.gradle.kts' }
+
+          # 用版本号拼出确切文件名，避免 dist 里残留的旧版本安装包被误取。
+          $apkName = "TVAutoPlayer-v$version-debug.apk"
+          $apkPath = Join-Path 'dist' $apkName
+          if (-not (Test-Path -LiteralPath $apkPath)) { throw "Debug APK not found: $apkName" }
+          $apkSize = (Get-Item -LiteralPath $apkPath).Length
+
+          $changelog = Get-Content -LiteralPath 'CHANGELOG.md' -Raw
+          $sections = $changelog -split '(?m)^(?=##\s)'
+          $section = $sections | Where-Object { $_ -match ('^##\s+.*' + [regex]::Escape($version)) } | Select-Object -First 1
+          if (-not $section) {
+              $section = $sections | Where-Object { $_ -match '^##\s' } | Select-Object -First 1
+          }
+
+          # 章节标题与 Release 标题重复，正文里去掉首行标题。
+          $sectionBody = ($section -replace '^##[^\r\n]*\r?\n', '').Trim()
+          if (-not $sectionBody) { $sectionBody = $section.Trim() }
+
+          $sha = Get-Content -LiteralPath (Join-Path 'dist' ($apkName + '.sha256')) -Raw
+          $hash = ($sha.Trim() -split '\s+')[0]
+
+          $notes = @(
+              $sectionBody,
+              '',
+              '## 安装包',
+              '',
+              "- ``$apkName``（$([math]::Round($apkSize / 1MB, 2)) MB）",
+              "- SHA-256: ``$hash``",
+              '',
+              '> 该安装包为 debug 签名，可直接侧载；若设备上已安装不同签名的旧版本，需先卸载。'
+          ) -join "`n"
+          Set-Content -LiteralPath 'release-notes.md' -Value $notes -Encoding utf8
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "apk=$apkName" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.release.outputs.version }}
+          name: v${{ steps.release.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            dist/${{ steps.release.outputs.apk }}
+            dist/${{ steps.release.outputs.apk }}.sha256
+          fail_on_unmatched_files: true
+          make_latest: true
+          draft: false
+          prerelease: false
