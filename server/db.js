@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS libraries (
   path       TEXT NOT NULL UNIQUE,
   is_main    INTEGER NOT NULL DEFAULT 0,
   enabled    INTEGER NOT NULL DEFAULT 1,
+  provider   TEXT NOT NULL DEFAULT 'LOCAL',
+  base_url   TEXT,
+  username   TEXT,
+  password   TEXT,
+  root_path  TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -71,6 +76,25 @@ if (!mediaColumns.includes('source_path')) {
 }
 if (!mediaColumns.includes('library_id')) {
   db.exec('ALTER TABLE media ADD COLUMN library_id INTEGER REFERENCES libraries(id)');
+}
+if (!mediaColumns.includes('remote_path')) {
+  db.exec('ALTER TABLE media ADD COLUMN remote_path TEXT');
+}
+// 本地上传时保留的文件夹相对路径（如 动漫/火影/第01集.mp4），用于按文件夹分类展示
+if (!mediaColumns.includes('sub_path')) {
+  db.exec('ALTER TABLE media ADD COLUMN sub_path TEXT');
+}
+
+// 老库补 OpenList 接入所需字段
+const libraryColumns = db.prepare('PRAGMA table_info(libraries)').all().map((column) => column.name);
+for (const [name, type] of [
+  ['provider', "TEXT NOT NULL DEFAULT 'LOCAL'"],
+  ['base_url', 'TEXT'],
+  ['username', 'TEXT'],
+  ['password', 'TEXT'],
+  ['root_path', 'TEXT'],
+]) {
+  if (!libraryColumns.includes(name)) db.exec(`ALTER TABLE libraries ADD COLUMN ${name} ${type}`);
 }
 
 /**

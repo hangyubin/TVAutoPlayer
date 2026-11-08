@@ -4,77 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TVAutoPlayer 管理后台</title>
-<style>
-  * { box-sizing: border-box; margin: 0; }
-  body { font: 14px/1.6 system-ui, "PingFang SC", sans-serif; background: #f4f5f7; color: #1f2329; }
-  header { background: #16633c; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  header h1 { font-size: 16px; }
-  nav { display: flex; gap: 4px; flex-wrap: wrap; }
-  nav button { background: transparent; color: #d7e9de; border: 1px solid transparent; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-  nav button.on { background: #fff; color: #16633c; font-weight: 600; }
-  main { max-width: 980px; margin: 20px auto; padding: 0 16px; }
-  .card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-  .card h2 { font-size: 15px; margin-bottom: 12px; }
-  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  th, td { padding: 8px 6px; border-bottom: 1px solid #eee; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  th { color: #646a73; font-weight: 500; font-size: 13px; }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; }
-  .row > * { flex: 0 0 auto; }
-  .row .grow { flex: 1 1 auto; min-width: 0; }
-  input, select { padding: 6px 8px; border: 1px solid #d0d3d6; border-radius: 6px; font-size: 14px; min-width: 0; }
-  input[type=number] { width: 70px; }
-  input[type=file] { max-width: 260px; }
-  .btn { padding: 6px 12px; border: none; border-radius: 6px; background: #16633c; color: #fff; cursor: pointer; font-size: 13px; white-space: nowrap; }
-  .btn.sub { background: #eef1f3; color: #1f2329; }
-  .btn.warn { background: #b71c1c; }
-  .btn:disabled { opacity: .5; cursor: default; }
-  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #eef1f3; }
-  tr.drag-row { cursor: grab; }
-  tr.drag-row.dragging { opacity: .45; }
-  tr.drag-row.drop-target td { box-shadow: inset 0 2px 0 #16633c; }
-  td.drag-handle { cursor: grab; color: #6b7280; white-space: nowrap; }
-  .tag.img { background: #e3f0e8; color: #16633c; }
-  .tag.vid { background: #e6ecf5; color: #1d4e89; }
-  .muted { color: #8f959e; font-size: 13px; }
-  #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: #1f2329; color: #fff; padding: 8px 16px; border-radius: 6px; display: none; z-index: 9; }
-  .hidden { display: none !important; }
-  /* 预览弹窗 */
-  #preview { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; z-index: 10; cursor: zoom-out; }
-  #preview.show { display: flex; }
-  #preview img, #preview video { max-width: 92vw; max-height: 88vh; background: #000; border-radius: 4px; cursor: default; }
-  #preview .close-btn { position: fixed; top: 16px; right: 20px; color: #fff; font-size: 28px; cursor: pointer; line-height: 1; padding: 4px 12px; border: 1px solid rgba(255,255,255,.3); border-radius: 4px; }
-  .thumb { width: 56px; height: 40px; object-fit: cover; border-radius: 3px; background: #eef1f3; cursor: zoom-in; display: inline-block; vertical-align: middle; }
-  .thumb.vid { background: #e6ecf5; color: #1d4e89; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-  .thumb-link { color: #16633c; cursor: zoom-in; text-decoration: underline; }
-  /* 登录 */
-  #loginForm { max-width: 340px; margin: 80px auto 0; padding: 28px; background: #fff; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.08); }
-  #loginForm h2 { font-size: 16px; margin-bottom: 16px; text-align: center; color: #16633c; }
-  #loginForm .row { margin-bottom: 12px; }
-  #loginForm input { width: 100%; }
-  #loginForm .btn { width: 100%; padding: 9px; font-size: 14px; }
-  #loginForm .hint { color: #8f959e; font-size: 12px; margin-top: 8px; text-align: center; }
-  #userPanel { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-  #userPanel .who { color: #d7e9de; font-size: 13px; }
-  #userPanel button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; }
-  /* 改密码 / 新增媒体库 弹窗 */
-  #pwdModal, #libModal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 11; }
-  #pwdModal.show, #libModal.show { display: flex; }
-  #pwdModal .box, #libModal .box { background: #fff; border-radius: 10px; padding: 20px; width: 340px; box-shadow: 0 12px 30px rgba(0,0,0,.2); }
-  #pwdModal h3, #libModal h3 { font-size: 15px; margin-bottom: 14px; }
-  #pwdModal input, #libModal input { width: 100%; margin-bottom: 10px; }
-  #pwdModal .actions, #libModal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
-  #libModal .hint { color: #8f959e; font-size: 12px; margin-bottom: 10px; }
-  /* 上传进度 */
-  #uploadBox { margin-top: 10px; display: none; }
-  #uploadBox.show { display: block; }
-  #uploadBox .bar-track { height: 14px; background: #eef1f3; border-radius: 7px; overflow: hidden; }
-  #uploadBox .bar-fill { height: 100%; width: 0; background: linear-gradient(90deg, #16633c, #34a86a); border-radius: 7px; transition: width .25s ease; }
-  #uploadBox .bar-fill.indeterminate { width: 40%; animation: prog 1.2s linear infinite; }
-  @keyframes prog { 0%{transform:translateX(-100%)} 100%{transform:translateX(350%)} }
-  #uploadBox .info { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; color: #646a73; }
-  #uploadBox .state { font-weight: 600; color: #16633c; }
-  #uploadBox .state.err { color: #b71c1c; }
-</style>
+<link rel="stylesheet" href="css/admin.css">
 </head>
 <body>
 <header>
@@ -97,13 +27,16 @@
 <section id="tab-media" class="card">
   <div class="row">
     <h2 class="grow" style="margin:0">媒体库</h2>
-    <button class="btn" id="libAddBtn">新增媒体库</button>
+    <button class="btn" id="libAddBtn">+ 新增媒体库</button>
   </div>
-  <p class="muted" style="margin:6px 0 10px">每个媒体库单独扫描；节目单和时段按库分组选择素材。外部文件夹只建立链接，不复制、不移动原文件。</p>
-  <div id="libList"></div>
+  <p class="muted" style="margin:6px 0 10px">本地文件夹用软链接引用，不复制原文件；OpenList 网盘库只登记目录信息，播放时由服务端实时取直链。每个库独立扫描：新增后自动扫描一次，之后点卡片上的「扫描」同步。</p>
+  <div id="libList" class="lib-grid"></div>
   <div class="row" style="margin-top:14px">
     <input type="file" id="file" class="grow" accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.heif,.mp4,.mkv,.webm,.ts,.m4v,.mov" multiple>
-    <button class="btn" id="uploadBtn">上传到主库</button>
+    <button class="btn" id="uploadBtn">上传文件</button>
+    <input type="file" id="folderFile" webkitdirectory directory multiple accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.heif,.mp4,.mkv,.webm,.ts,.m4v,.mov" style="display:none">
+    <button class="btn" id="uploadFolderBtn">上传文件夹</button>
+    <button class="btn warn" id="uploadRetry" style="display:none">重传失败项</button>
     <button class="btn sub" id="uploadCancel" style="display:none">取消</button>
   </div>
   <div id="uploadBox">
@@ -115,32 +48,80 @@
     <div id="queues" style="margin-top:10px;max-height:160px;overflow-y:auto"></div>
   </div>
   <p class="muted" style="margin:8px 0">支持 jpg/png/webp/bmp/heic 图片，mp4/mkv/webm/ts 视频；按内容哈希去重。</p>
+  <div class="row" style="margin-bottom:8px">
+    <input id="mediaSearch" class="grow" placeholder="搜索文件名" autocomplete="off">
+    <select id="mediaLib" style="width:140px"><option value="">全部媒体库</option></select>
+    <select id="mediaFolder" style="width:150px"><option value="">全部文件夹</option></select>
+    <select id="mediaKind" style="width:110px">
+      <option value="">全部类型</option>
+      <option value="IMAGE">图片</option>
+      <option value="VIDEO">视频</option>
+    </select>
+    <select id="mediaSort" style="width:120px" title="排序方式">
+      <option value="name">按文件名</option>
+      <option value="folder">按文件夹</option>
+      <option value="time">按时间</option>
+    </select>
+  </div>
   <table><thead><tr>
     <th style="width:60px">缩略图</th><th>文件名</th><th style="width:70px">类型</th>
     <th style="width:110px">媒体库</th><th style="width:90px">大小</th><th style="width:130px">操作</th>
   </tr></thead><tbody id="mediaList"></tbody></table>
+  <div class="row" style="margin-top:10px;justify-content:flex-end">
+    <span class="muted grow" id="mediaTotal"></span>
+    <select id="mediaSize" style="width:100px">
+      <option value="20">20 条/页</option>
+      <option value="50">50 条/页</option>
+      <option value="100">100 条/页</option>
+    </select>
+    <button class="btn sub" id="mediaPrev" type="button">上一页</button>
+    <span class="muted" id="mediaPage"></span>
+    <button class="btn sub" id="mediaNext" type="button">下一页</button>
+  </div>
 </section>
 
 <section id="tab-program" class="card hidden">
   <h2>默认节目单（无时段命中时播放）</h2>
   <div class="row">
-    <button class="btn sub" id="progPickToggle">批量添加</button>
+    <button class="btn sub" id="progPickToggle">选择素材</button>
     <button class="btn" id="progSave">保存</button>
+    <select id="progListSort" style="width:140px" title="节目单排序方式">
+      <option value="manual">手动排序</option>
+      <option value="name-asc">文件名 升序</option>
+      <option value="name-desc">文件名 倒序</option>
+      <option value="folder-asc">文件夹 升序</option>
+      <option value="folder-desc">文件夹 倒序</option>
+      <option value="lib-asc">媒体库 升序</option>
+      <option value="dur-asc">时长 升序</option>
+      <option value="dur-desc">时长 倒序</option>
+    </select>
+    <button class="btn sub" id="progShuffle" type="button" title="随机打乱顺序">随机</button>
     <span class="muted" id="progCount"></span>
   </div>
-  <div id="progPicker" class="hidden" style="margin-top:10px;border:1px solid #e3e5e7;border-radius:6px;padding:10px">
+  <div id="progPicker" class="hidden" style="margin-top:10px;border:1px solid #e3e5e7;border-radius:8px;padding:10px">
     <div class="row">
-      <button class="btn sub" id="pickAll">全选</button>
-      <button class="btn sub" id="pickNone">清空</button>
-      <input type="number" id="progDur" min="1" placeholder="秒">
-      <button class="btn" id="progAdd">添加选中</button>
-      <span class="muted">勾选后追加到节目单末尾</span>
+      <select id="progLib" style="width:150px"></select>
+      <select id="progSort" style="width:130px" title="排序方式">
+        <option value="name">按文件名</option>
+        <option value="folder">按文件夹</option>
+        <option value="time">按时间</option>
+      </select>
+      <input id="progSearch" class="grow" placeholder="搜索文件名" autocomplete="off">
+      <input type="number" id="progDur" min="1" placeholder="图片秒数" style="width:96px" title="仅对图片生效，留空用终端默认时长">
     </div>
-    <div id="progPickList" style="margin-top:8px;max-height:260px;overflow-y:auto"></div>
+    <div class="filters" id="progKind"></div>
+    <div class="pick-bar">
+      <span>已选 <b id="pickCount">0</b> 项</span>
+      <button class="btn sub" id="pickSelectAll" type="button">全选当前</button>
+      <button class="btn sub" id="pickInvert" type="button">反选</button>
+      <button class="btn" id="pickAddSelected" type="button" disabled>加入节目单</button>
+      <button class="btn sub" id="pickClearSel" type="button">清空选择</button>
+    </div>
+    <div id="progPickList" class="pick-grid"></div>
   </div>
-  <p class="muted" style="margin:8px 0">拖动行可直接调整顺序；“秒”仅对图片生效，留空使用终端默认时长。保存后立即生效，电视端 30 秒内自动刷新。</p>
+  <p class="muted" style="margin:8px 0">点文件夹卡片右上角勾选框可直接选中整个文件夹（含子目录）；点「进入」或卡片其他区域浏览单个素材。「全选当前」勾选本视图全部素材，「反选」反转状态。拖动行调整顺序。</p>
   <table><thead><tr>
-    <th style="width:60px">拖动</th><th>文件</th><th style="width:80px">时长</th><th style="width:80px">操作</th>
+    <th style="width:60px">拖动</th><th>文件</th><th style="width:110px">媒体库</th><th style="width:80px">时长</th><th style="width:80px">操作</th>
   </tr></thead><tbody id="progList"></tbody></table>
 </section>
 
@@ -162,7 +143,9 @@
   <p class="muted" style="margin:8px 0">一个时段只播一个内容（一个直播源或一个媒体），创建时选定，之后可用「更换」替换。修改时间只改变切换时刻，不会打断正在播放的内容。</p>
   <div class="row">
     <select id="schStart"></select><span>至</span><select id="schEnd"></select>
-    <select id="schMedia" class="grow"></select>
+    <button class="btn sub" id="schPickMedia" type="button">选择内容</button>
+    <span class="muted" id="schMediaName" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">未选择</span>
+    <input type="hidden" id="schMedia">
     <input type="number" id="schDur" min="1" placeholder="秒">
     <button class="btn" id="schAdd">添加时段</button>
   </div>
@@ -170,6 +153,26 @@
 </section>
 
 </main>
+<!-- 通用素材选择弹窗：时段计划选内容，文件夹分层 + 搜索，避免几千项下拉 -->
+<div id="pickModal" class="pick-modal hidden">
+  <div class="pick-modal-box">
+    <div class="row">
+      <strong id="pickModalTitle">选择内容</strong>
+      <span class="grow"></span>
+      <button class="btn sub" id="pickModalClose" type="button">关闭</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <select id="pmLib" style="width:150px"></select>
+      <input id="pmSearch" class="grow" placeholder="搜索文件名或文件夹" autocomplete="off">
+      <select id="pmKind" style="width:110px">
+        <option value="">全部类型</option>
+        <option value="IMAGE">图片</option>
+        <option value="VIDEO">视频</option>
+      </select>
+    </div>
+    <div id="pmList" class="pick-grid"></div>
+  </div>
+</div>
 <!-- 预览弹窗 -->
 <div id="preview"><span class="close-btn" onclick="closePreview()">× 关闭</span></div>
 
@@ -182,18 +185,42 @@
   <p class="hint">首次启动默认账户 admin / admin</p>
 </form>
 
-<!-- 新增媒体库弹窗 -->
+<!-- 新增媒体库：选择对话框 -->
 <div id="libModal">
-  <form class="box" onsubmit="return false">
-    <h3>新增媒体库</h3>
-    <p class="hint">填写一个已存在的文件夹，添加后只扫描这一个库。</p>
-    <input id="libName" placeholder="媒体库名称，如 广告素材" autocomplete="off">
-    <input id="libPath" placeholder="文件夹绝对路径，如 D:\Videos 或 /mnt/nas/videos" autocomplete="off">
-    <div class="actions">
-      <button class="btn sub" id="libCancel" type="button">取消</button>
-      <button class="btn" id="libOk" type="submit">添加并扫描</button>
+  <div class="box picker">
+    <div class="pick-head">
+      <h3>新增媒体库</h3>
+      <button class="pick-x" id="pickClose" type="button" title="关闭">×</button>
     </div>
-  </form>
+    <div class="pick-body">
+      <aside class="pick-side">
+        <div class="pick-side-title">来源</div>
+        <div class="pick-src on" data-type="LOCAL"><b>本地文件夹</b><span>服务器磁盘、已挂载的 NAS</span></div>
+        <div class="pick-src" data-type="ALIST"><b>OpenList 网盘</b><span>阿里云盘、夸克、百度等</span></div>
+      </aside>
+      <section class="pick-main">
+        <div class="pick-cred hidden" id="pickCred">
+          <input id="pickBase" placeholder="http://192.168.2.249:5244" autocomplete="off">
+          <input id="pickUser" placeholder="账号" style="flex:0 0 100px" autocomplete="off">
+          <input id="pickPass" type="password" placeholder="密码" style="flex:0 0 120px" autocomplete="new-password">
+          <button class="btn sub" id="pickConnect" type="button">连接</button>
+        </div>
+        <div class="pick-crumb" id="pickCrumb"></div>
+        <div class="pick-jump">
+          <input id="pickJump" placeholder="输入路径后回车直达，如 /阿里云盘/电影" autocomplete="off">
+          <button class="btn sub" id="pickJumpBtn" type="button">跳转</button>
+        </div>
+        <div class="pick-list" id="pickList"></div>
+        <p class="pick-tip" id="pickTip">选中的目录就是媒体库范围：进入网盘后再点进具体文件夹即可，不必停在根目录。</p>
+      </section>
+    </div>
+    <div class="pick-foot">
+      <div class="pick-pos">位置：<b id="pickPath">未选择</b></div>
+      <input id="pickName" placeholder="媒体库名称" style="flex:0 0 160px" autocomplete="off">
+      <button class="btn sub" id="pickCancel" type="button">取消</button>
+      <button class="btn" id="pickOk" type="button" disabled>添加并扫描</button>
+    </div>
+  </div>
 </div>
 
 <!-- 改密码弹窗 -->
@@ -210,744 +237,7 @@
   </form>
 </div>
 
-<script>
-const $ = (s) => document.querySelector(s);
-const api = async (m, url, body, isForm) => {
-  const r = await fetch(url, {
-    method: m,
-    credentials: 'same-origin',
-    headers: isForm ? undefined : { 'Content-Type': 'application/json' },
-    body: isForm ? body : (body ? JSON.stringify(body) : undefined),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) { toast(data.error || ('错误 ' + r.status)); throw new Error(data.error); }
-  return data;
-};
-const toast = (msg) => {
-  const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
-  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2500);
-};
-const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+<script src="js/admin.js"></script>
 
-// 选项卡
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + b.dataset.tab));
-  load();
-});
-
-let media = [], program = [], lives = [];
-
-// ----- 直播源 -----
-async function loadLive() {
-  lives = await api('GET', '/api/live');
-  $('#liveList').innerHTML = lives.map(s => `<tr>
-    <td>${esc(s.name)}</td>
-    <td title="${esc(s.url)}" style="max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.url)}</td>
-    <td><span class="tag ${s.enabled?'img':''}">${s.enabled?'启用':'停用'}</span></td>
-    <td><button class="btn sub" onclick="checkLive(${s.id})">检测</button>
-        <button class="btn sub" onclick="toggleLive(${s.id},${s.enabled?0:1})">${s.enabled?'停用':'启用'}</button>
-        <button class="btn warn" onclick="delLive(${s.id})">删除</button></td></tr>`).join('')
-    || '<tr><td colspan="4" class="muted">暂无直播源，添加后到「时段」中编排</td></tr>';
-  // 时段页的「添加」下拉同时列出媒体与直播源；直播源异步加载完后必须刷新它，
-  // 否则首次进入时段页时下拉里只有媒体，看不到直播源。
-  const schSelect = $('#schMedia');
-  if (schSelect) schSelect.innerHTML = schedOptionsHtml();
-}
-async function addLive(force) {
-  const name = $('#liveName').value.trim(), url = $('#liveUrl').value.trim();
-  if (!name || !url) return toast('请填写名称和地址');
-  if (!force) toast('正在检测地址...');
-  const r = await fetch('/api/live', {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, url, force: !!force }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (r.ok) {
-    $('#liveName').value = ''; $('#liveUrl').value = '';
-    const p = data.probe;
-    toast(force ? '已保存（未通过检测）' : `已添加，检测通过（延迟 ${p.latencyMs}ms · ${p.kbps} KB/s）`);
-    loadLive();
-    return;
-  }
-  if (r.status === 400 && data.probeFailed) {
-    if (confirm(`${data.error}\n\n可能是服务器访问受限（电视端未必不能播），或该源速度确实偏慢。\n仍要保存吗？`)) {
-      return addLive(true);
-    }
-    return;
-  }
-  toast(data.error || ('错误 ' + r.status));
-}
-$('#liveAdd').onclick = () => addLive(false);
-window.checkLive = async (id) => {
-  toast('检测中（约 5-10 秒）...');
-  try {
-    const d = await api('GET', '/api/live/' + id + '/check');
-    if (d.ok && d.verdict === 'good') toast(`稳定 ✓ 延迟 ${d.latencyMs}ms · ${d.kbps} KB/s`);
-    else if (d.ok) toast(`可用但偏慢 ⚠ 延迟 ${d.latencyMs}ms · ${d.kbps} KB/s`);
-    else toast('检测失败：' + (d.reason || '未知原因'));
-  } catch {}
-};
-window.toggleLive = async (id, enabled) => {
-  await api('PUT', '/api/live/' + id, { enabled: !!enabled });
-  toast(enabled ? '已启用' : '已停用'); loadLive();
-};
-window.delLive = async (id) => {
-  if (!confirm('删除该直播源？引用它的时段会自动移除该项。')) return;
-  const r = await api('DELETE', '/api/live/' + id);
-  toast(r.disabledSchedules ? `已删除，${r.disabledSchedules} 个时段已自动停用` : '已删除');
-  loadLive();
-};
-const liveNameOf = (id) => {
-  const s = lives.find(x => x.id === id);
-  return s ? `[直播] ${s.name}` : `[直播] #${id}（已删除）`;
-};
-const itemNameOf = (it) => it.liveId != null ? liveNameOf(it.liveId) : mediaNameOf(it.mediaId);
-
-// ----- 媒体库 -----
-async function loadMedia() {
-  media = await api('GET', '/api/media');
-  $('#mediaList').innerHTML = media.map(m => {
-    const url = 'media/' + m.filename;
-    const thumb = m.kind === 'IMAGE'
-      ? `<img class="thumb" src="${url}" alt="" onclick="openPreview('${url}', 'IMAGE')">`
-      : `<span class="thumb vid" onclick="openPreview('${url}', 'VIDEO')">▶ 视频</span>`;
-    return `<tr>
-      <td>${thumb}</td><td title="${esc(m.orig_name)}">${esc(m.orig_name)}</td>
-      <td><span class="tag ${m.kind==='IMAGE'?'img':'vid'}">${m.kind==='IMAGE'?'图片':'视频'}</span></td>
-      <td><span class="tag ${m.libraryIsMain ? 'img' : 'vid'}">${esc(m.libraryName || '主库')}</span></td>
-      <td>${fmtSize(m.size)}</td>
-      <td><button class="btn sub" onclick="openPreview('${url}', '${m.kind}')">预览</button>
-          <button class="btn warn" onclick="delMedia(${m.id})">删除</button></td></tr>`;
-  }).join('');
-  await loadLibraries();
-  $('#schMedia').innerHTML = schedOptionsHtml();
-}
-// 按媒体库分组，节目单/时段下拉里能直接看出素材来自哪个库
-function groupMedia() {
-  const groups = new Map();
-  for (const m of media) {
-    const key = m.libraryName || '主媒体库';
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(m);
-  }
-  return groups;
-}
-const mediaOptionsHtml = () => Array.from(groupMedia().entries()).map(([name, list]) =>
-  `<optgroup label="${esc(name)}">` +
-  list.map(m => `<option value="${m.id}">[${m.kind==='IMAGE'?'图':'视'}] ${esc(m.orig_name)}</option>`).join('') +
-  '</optgroup>'
-).join('');
-// 时段下拉：媒体 + 直播源（live: 前缀区分）
-const schedOptionsHtml = () =>
-  mediaOptionsHtml() +
-  (lives.length
-    ? `<optgroup label="直播源">${lives.map(s =>
-        `<option value="live:${s.id}">[直播] ${esc(s.name)}${s.enabled?'':'（停用）'}</option>`).join('')}</optgroup>`
-    : '');
-const mediaNameOf = (id) => {
-  const m = media.find(x => x.id === id);
-  return m ? m.orig_name : `#${id}（已删除）`;
-};
-const ensureMedia = async () => {
-  media = await api('GET', '/api/media');
-  $('#schMedia').innerHTML = schedOptionsHtml();
-  if (!$('#progPicker').classList.contains('hidden')) renderPicker();
-};
-window.openPreview = (url, kind) => {
-  const p = $('#preview');
-  p.innerHTML = `<span class="close-btn" onclick="closePreview()">× 关闭</span>` +
-    (kind === 'VIDEO'
-      ? `<video src="${url}" controls preload="metadata" style="max-width:92vw;max-height:88vh"></video>`
-      : `<img src="${url}" alt="">`);
-  p.classList.add('show');
-  p.onclick = (e) => { if (e.target === p) closePreview(); };
-};
-window.closePreview = () => {
-  const p = $('#preview'); p.classList.remove('show'); p.innerHTML = `<span class="close-btn" onclick="closePreview()">× 关闭</span>`;
-  p.onclick = null;
-};
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePreview(); });
-window.delMedia = async (id) => {
-  const target = media.find(m => m.id === id);
-  const hint = target && target.source_path
-    ? `该媒体来自外部文件夹（${target.source_path}），只会从媒体库移除，源文件保留；下次扫描若仍在文件夹中会重新加入。`
-    : '引用它的节目单会自动移除该项。';
-  if (!confirm(`删除该媒体？${hint}`)) return;
-  const r = await api('DELETE', '/api/media/' + id);
-  toast(r.disabledSchedules ? `已删除，${r.disabledSchedules} 个时段已自动停用` : '已删除');
-  load();
-};
-const fmtSize = (n) => n > 1048576 ? (n/1048576).toFixed(1)+' MB' : Math.ceil(n/1024)+' KB';
-const fmtSpeed = (b) => b > 1048576 ? (b/1048576).toFixed(1)+' MB/s' : Math.ceil(b/1024)+' KB/s';
-let currentXhr = null, queueAbort = false, queueXhrs = [];
-const upBox = () => $('#uploadBox'), fill = () => $('#barFill'), state = () => $('#upState'), right = () => $('#upRight'), queues = () => $('#queues');
-function showUp() { upBox().classList.add('show'); }
-function hideUp() { upBox().classList.remove('show'); queues().innerHTML = ''; }
-function setPct(p) { fill().classList.remove('indeterminate'); fill().style.width = Math.max(0, Math.min(100, p)) + '%'; }
-
-function renderQueue(items) {
-  queues().innerHTML = items.map((it, i) =>
-    `<div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:2px 0">
-      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(it.file.name)}">${i+1}. ${esc(it.file.name)}</span>
-      <span class="tag" style="background:${it.tagBg||'#eef1f3'};color:${it.tagColor||'#1f2329'}">${it.label}</span>
-    </div>`).join('');
-}
-
-function uploadOne(file, idx, total, items) {
-  return new Promise((resolve) => {
-    const fd = new FormData(); fd.append('file', file);
-    const xhr = new XMLHttpRequest();
-    queueXhrs.push(xhr);
-    // 大文件放宽超时：每 MB 约 2 秒，下限 5 分钟、上限 60 分钟
-    xhr.timeout = Math.min(3_600_000, Math.max(300_000, file.size / 1e6 * 2000));
-    let lastLoaded = 0, lastT = Date.now(), lastRender = 0;
-    renderQueue(items);
-    state().textContent = `[${idx+1}/${total}] 上传 ${file.name}`;
-    state().classList.remove('err');
-    right().textContent = fmtSize(file.size);
-
-    xhr.upload.onprogress = (e) => {
-      if (queueAbort) { xhr.abort(); return; }
-      if (e.lengthComputable) {
-        const p = e.loaded / e.total * 100;
-        items[idx].pct = p;
-        setPct(p);
-        const now = Date.now();
-        const dt = (now - lastT) / 1000;
-        const speed = dt > 0 ? (e.loaded - lastLoaded) / dt : 0;
-        lastLoaded = e.loaded; lastT = now;
-        right().textContent = `${Math.round(p)}% · ${fmtSize(e.loaded)}/${fmtSize(e.total)} · ${fmtSpeed(speed)}`;
-        // 传输完成后服务端还要校验哈希（大文件需要几秒），这里给出明确反馈而不是停在 100%
-        if (e.loaded >= e.total) {
-          state().textContent = `[${idx+1}/${total}] 处理中 ${file.name}`;
-          state().classList.remove('err');
-          right().textContent = '服务端校验中…（大文件需要数秒）';
-          fill().classList.add('indeterminate');
-        }
-        items[idx].label = `${Math.round(p)}%`;
-        // 进度事件非常频繁，150ms 节流一次再重绘队列
-        if (now - lastRender < 150) return;
-        lastRender = now;
-        renderQueue(items);
-      }
-    };
-    xhr.onload = () => {
-      fill().classList.remove('indeterminate');
-      const ok = xhr.status >= 200 && xhr.status < 300;
-      let reason = '';
-      if (!ok) { try { reason = (JSON.parse(xhr.responseText) || {}).error || ''; } catch {} }
-      let msg = ok ? 'done' : ('err '+xhr.status);
-      let label = ok ? '✓' : msg;
-      let tagBg = ok ? '#e3f0e8' : '#ffe3e3';
-      let tagColor = ok ? '#16633c' : '#b71c1c';
-      let result = null;
-      if (ok) { try { result = JSON.parse(xhr.responseText); } catch {} }
-      items[idx].label = label; items[idx].tagBg = tagBg; items[idx].tagColor = tagColor;
-      renderQueue(items);
-      if (!ok) {
-        state().textContent = `失败：${file.name}`;
-        state().classList.add('err');
-        right().textContent = reason || `HTTP ${xhr.status}`;
-      }
-      resolve({ ok, result });
-    };
-    xhr.onerror = () => {
-      fill().classList.remove('indeterminate');
-      state().textContent = `上传中断：${file.name}`;
-      state().classList.add('err');
-      right().textContent = '网络断开、文件超过大小上限或服务端已停止';
-      items[idx].label = '✗'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c';
-      renderQueue(items); resolve({ok:false});
-    };
-    xhr.ontimeout = () => {
-      fill().classList.remove('indeterminate');
-      state().textContent = `上传超时：${file.name}`;
-      state().classList.add('err');
-      right().textContent = '网络过慢，建议改用「扫描媒体文件夹」导入';
-      items[idx].label = '超时'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c';
-      renderQueue(items); resolve({ok:false});
-    };
-    xhr.onabort = () => { items[idx].label = '取消'; items[idx].tagBg='#ffe3e3'; items[idx].tagColor='#b71c1c'; renderQueue(items); resolve({ok:false}); };
-    xhr.open('POST', '/api/media');
-    xhr.withCredentials = true;
-    xhr.send(fd);
-  });
-}
-
-// ----- 媒体库管理 -----
-let libraries = [];
-async function loadLibraries() {
-  libraries = await api('GET', '/api/libraries');
-  renderLibraries();
-  $('#schMedia').innerHTML = schedOptionsHtml();
-}
-function renderLibraries() {
-  $('#libList').innerHTML = libraries.map(l => `
-    <div class="row" style="border:1px solid #e3e5e7;border-radius:6px;padding:8px 10px;margin-bottom:6px;align-items:center">
-      <span class="grow" style="min-width:0">
-        <b>${esc(l.name)}</b>
-        <span class="muted" style="margin-left:8px;word-break:break-all">${esc(l.path)}</span>
-        <br><span class="muted">${l.mediaCount} 个媒体${l.enabled ? '' : ' · 已停用'}${l.exists ? '' : ' · 目录不可访问'}</span>
-      </span>
-      <button class="btn sub" id="scan-lib-${l.id}" onclick="scanLibrary(${l.id})">扫描</button>
-      ${l.isMain ? '' : `<button class="btn warn" onclick="delLibrary(${l.id})">删除</button>`}
-    </div>`).join('');
-}
-async function scanLibrary(id) {
-  const lib = libraries.find(l => l.id === id);
-  const btn = document.getElementById(`scan-lib-${id}`);
-  if (btn) { btn.disabled = true; btn.textContent = '扫描中...'; }
-  try {
-    const r = await api('POST', `/api/libraries/${id}/scan`, {});
-    let msg = `${lib ? lib.name : '媒体库'}：扫描 ${r.scanned} 个，新增 ${r.added}，重复 ${r.skipped}`;
-    if (r.already) msg += `，已入库跳过 ${r.already}`;
-    if (r.failed) msg += `，失败 ${r.failed}`;
-    if (r.truncated) msg += `（单次上限 ${r.limit} 个，请再次扫描）`;
-    toast(msg);
-    await loadMedia();
-    await loadLibraries();
-    if (r.errors && r.errors.length) console.warn('scan errors:', r.errors);
-  } catch (e) {
-    // api() 已提示原因
-    if (btn) { btn.disabled = false; btn.textContent = '扫描'; }
-  }
-}
-window.scanLibrary = scanLibrary;
-window.delLibrary = async (id) => {
-  const lib = libraries.find(l => l.id === id);
-  if (!confirm(`删除媒体库「${lib ? lib.name : id}」？\n库内的 ${lib ? lib.mediaCount : ''} 个媒体会从媒体库和节目单中移除，外部源文件不会被删除。`)) return;
-  try {
-    const r = await api('DELETE', `/api/libraries/${id}`);
-    let msg = `已删除媒体库与 ${r.removedMedia} 个媒体`;
-    if (r.disabledSchedules) msg += `，${r.disabledSchedules} 个时段因内容被清空而停用`;
-    toast(msg);
-    await loadMedia();
-    await loadLibraries();
-    loadProgram();
-    loadSchedules();
-  } catch (e) { /* api() 已提示原因 */ }
-};
-
-const libModal = $('#libModal');
-$('#libAddBtn').onclick = () => {
-  $('#libName').value = '';
-  $('#libPath').value = '';
-  libModal.classList.add('show');
-  $('#libName').focus();
-};
-$('#libCancel').onclick = () => libModal.classList.remove('show');
-$('#libModal').onclick = (e) => {
-  if (e.target === libModal) libModal.classList.remove('show');
-};
-$('#libOk').onclick = async () => {
-  const name = $('#libName').value.trim();
-  const dir = $('#libPath').value.trim();
-  if (!name) return toast('请填写媒体库名称');
-  if (!dir) return toast('请填写文件夹绝对路径');
-  const btn = $('#libOk');
-  btn.disabled = true; btn.textContent = '添加中...';
-  try {
-    const r = await api('POST', '/api/libraries', { name, path: dir });
-    libModal.classList.remove('show');
-    libraries = r.libraries;
-    renderLibraries();
-    toast(`媒体库「${name}」已添加，正在扫描`);
-    await scanLibrary(r.id);
-  } catch (e) {
-    // api() 已提示原因
-  } finally {
-    btn.disabled = false; btn.textContent = '添加并扫描';
-  }
-};
-
-$('#uploadBtn').onclick = async () => {
-  const files = Array.from($('#file').files || []);
-  if (!files.length) return toast('请先选择文件');
-  queueAbort = false; queueXhrs = [];
-  $('#uploadCancel').style.display = '';
-  const items = files.map(f => ({ file: f, pct: 0, label: '等待' }));
-  showUp();
-  fill().classList.remove('indeterminate'); fill().style.width = '0%';
-  $('#uploadBtn').disabled = true;
-  renderQueue(items);
-
-  let ok = 0, dup = 0, fail = 0;
-  for (let i = 0; i < files.length; i++) {
-    if (queueAbort) break;
-    const r = await uploadOne(files[i], i, files.length, items);
-    if (r.ok && r.result?.duplicated) dup++;
-    else if (r.ok) ok++; else fail++;
-  }
-
-  $('#uploadCancel').style.display = 'none';
-  $('#uploadBtn').disabled = false;
-  state().textContent = queueAbort ? '已取消' : `完成：成功 ${ok}  ·  重复 ${dup}  ·  失败 ${fail}`;
-  state().classList.toggle('err', fail > 0);
-  right().textContent = '';
-  toast(queueAbort ? '已取消' : `上传完成（成功 ${ok}，重复 ${dup}，失败 ${fail}）`);
-  $('#file').value = '';
-  setTimeout(() => { if (!queueAbort) hideUp(); }, 2500);
-  if (ok > 0 || dup > 0) load();
-};
-$('#uploadCancel').onclick = () => { queueAbort = true; queueXhrs.forEach(x => { try { x.abort(); } catch {} }); };
-
-// ----- 默认节目单 -----
-async function loadProgram() {
-  await ensureMedia();
-  program = await api('GET', '/api/program');
-  renderProgram();
-}
-function renderProgram() {
-  $('#progCount').textContent = '共 ' + program.length + ' 项';
-  $('#progList').innerHTML = program.map((it, i) => `<tr class="drag-row" draggable="true" data-index="${i}">
-    <td class="drag-handle">☰ ${i+1}</td><td title="${esc(it.name)}">${esc(it.name)}</td>
-    <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
-    <td><button class="btn warn" onclick="rmItem(${i})">移除</button></td></tr>`).join('');
-}
-window.rmItem = (i) => { program.splice(i, 1); renderProgram(); };
-
-// 拖动排序：把行拖到另一行的位置即可
-let dragFrom = -1;
-const progList = $('#progList');
-const clearDragMarks = () => {
-  progList.querySelectorAll('tr').forEach(el => el.classList.remove('dragging', 'drop-target'));
-};
-progList.addEventListener('dragstart', (e) => {
-  const tr = e.target.closest('tr');
-  if (!tr || tr.dataset.index === undefined) return;
-  dragFrom = +tr.dataset.index;
-  e.dataTransfer.effectAllowed = 'move';
-  try { e.dataTransfer.setData('text/plain', String(dragFrom)); } catch {}
-  tr.classList.add('dragging');
-});
-progList.addEventListener('dragend', () => { dragFrom = -1; clearDragMarks(); });
-progList.addEventListener('dragover', (e) => {
-  const tr = e.target.closest('tr');
-  if (!tr || dragFrom < 0) return;
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
-  clearDragMarks();
-  tr.classList.add('drop-target');
-});
-progList.addEventListener('dragleave', (e) => {
-  if (!progList.contains(e.relatedTarget)) clearDragMarks();
-});
-progList.addEventListener('drop', (e) => {
-  if (dragFrom < 0) return;
-  e.preventDefault();
-  const tr = e.target.closest('tr');
-  const to = tr && tr.dataset.index !== undefined ? +tr.dataset.index : program.length - 1;
-  if (to !== dragFrom) {
-    const [moved] = program.splice(dragFrom, 1);
-    program.splice(to, 0, moved);
-  }
-  dragFrom = -1;
-  clearDragMarks();
-  renderProgram();
-});
-// 批量添加：勾选媒体库内容，一键追加到节目单末尾（点「保存」后生效）
-function renderPicker() {
-  const groups = groupMedia();
-  $('#progPickList').innerHTML = groups.size
-    ? Array.from(groups.entries()).map(([name, list]) => `
-      <div class="muted" style="margin:8px 0 2px;font-weight:600">${esc(name)}</div>
-      ${list.map(m => `
-        <label style="display:flex;gap:8px;align-items:center;padding:4px 2px;cursor:pointer">
-          <input type="checkbox" value="${m.id}">
-          <span class="tag ${m.kind==='IMAGE'?'img':'vid'}">${m.kind==='IMAGE'?'图片':'视频'}</span>
-          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m.orig_name)}">${esc(m.orig_name)}</span>
-        </label>`).join('')}`).join('')
-    : '<p class="muted">媒体库为空，请先到「媒体库」上传或扫描</p>';
-}
-$('#progPickToggle').onclick = () => {
-  const p = $('#progPicker');
-  p.classList.toggle('hidden');
-  if (!p.classList.contains('hidden')) renderPicker();
-};
-$('#pickAll').onclick = () => $('#progPickList').querySelectorAll('input[type=checkbox]').forEach(c => c.checked = true);
-$('#pickNone').onclick = () => $('#progPickList').querySelectorAll('input[type=checkbox]').forEach(c => c.checked = false);
-$('#progAdd').onclick = () => {
-  const ids = Array.from($('#progPickList').querySelectorAll('input[type=checkbox]:checked')).map(c => +c.value);
-  if (!ids.length) return toast('请先勾选媒体');
-  const dur = +$('#progDur').value || null;
-  for (const id of ids) {
-    const m = media.find(x => x.id === id);
-    if (m) program.push({ mediaId: id, durationSec: m.kind === 'IMAGE' ? dur : null, name: m.orig_name, kind: m.kind });
-  }
-  $('#progDur').value = '';
-  $('#pickNone').click();
-  renderProgram();
-  toast('已添加 ' + ids.length + ' 项，点「保存」后生效');
-};
-$('#progSave').onclick = async () => {
-  await api('PUT', '/api/program', { items: program.map(it => ({ mediaId: it.mediaId, durationSec: it.durationSec })) });
-  toast('节目单已保存，电视端将在 30 秒内自动生效'); loadProgram();
-};
-
-// ----- 时段计划 -----
-const minuteOpts = () => {
-  let h = '';
-  for (let m = 0; m < 1440; m += 30)
-    h += `<option value="${m}">${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart(2,'0')}</option>`;
-  return h;
-};
-$('#schStart').innerHTML = minuteOpts(); $('#schEnd').innerHTML = minuteOpts();
-$('#schStart').value = 480; $('#schEnd').value = 1080;
-let schedules = [];
-let schTimeEditing = -1;
-const fmtMin = (m) => `${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
-
-async function loadSchedules() {
-  await ensureMedia();
-  await loadLive();
-  schedules = await api('GET', '/api/schedules');
-  schTimeEditing = -1;
-  renderSchedules();
-}
-function renderSchedules() {
-  $('#schList').innerHTML = schedules.map((s, si) => {
-    const rows = s.items.map((it, i) => `<tr class="drag-row" draggable="true" data-sch="${si}" data-index="${i}">
-      <td class="drag-handle">☰ ${i+1}</td>
-      <td title="${esc(itemNameOf(it))}">${esc(itemNameOf(it))}</td>
-      <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
-      <td><button class="btn warn" onclick="schRmItem(${si},${i})">移除</button></td></tr>`).join('')
-      || '<tr><td colspan="4" class="muted">暂无内容</td></tr>';
-    const timeEdit = schTimeEditing === si
-      ? `<div class="row" style="margin-top:8px">
-          <select id="editStart">${minuteOpts()}</select><span>至</span><select id="editEnd">${minuteOpts()}</select>
-          <button class="btn" onclick="schSaveTime(${si})">确定</button>
-          <button class="btn sub" onclick="schCancelTime()">取消</button>
-        </div>` : '';
-    return `<div class="card" style="background:#f8f9fa;margin-top:12px">
-      <div class="row">
-        <strong>${fmtMin(s.startMinute)} - ${fmtMin(s.endMinute)}${s.endMinute < s.startMinute ? '（跨午夜）' : ''}</strong>
-        <span class="tag">${s.enabled ? '启用' : '停用'}</span>
-        <span class="muted">${s.items.length ? esc(itemNameOf(s.items[0])) : '无内容'}</span>
-        <span class="grow"></span>
-        <button class="btn sub" onclick="schStartEditTime(${si})">修改时间</button>
-        <button class="btn sub" onclick="toggleSch(${si})">${s.enabled ? '停用' : '启用'}</button>
-        <button class="btn warn" onclick="delSch(${si})">删除</button>
-        <button class="btn" onclick="saveSch(${si})">保存</button>
-      </div>
-      ${timeEdit}
-      <table style="margin-top:8px"><thead><tr>
-        <th style="width:60px">拖动</th><th>文件</th><th style="width:80px">时长</th><th style="width:80px">操作</th>
-      </tr></thead><tbody>${rows}</tbody></table>
-      ${s.items.length
-        ? `<div class="row" style="margin-top:8px">
-             <span class="muted grow">一个时段只播一个内容，点「更换」可直接替换</span>
-             <select id="schItemMedia${si}" style="width:220px">${schedOptionsHtml()}</select>
-             <input type="number" id="schItemDur${si}" min="1" placeholder="秒">
-             <button class="btn sub" onclick="schReplaceItem(${si})">更换</button>
-           </div>`
-        : `<div class="row" style="margin-top:8px">
-             <select class="grow" id="schItemMedia${si}">${schedOptionsHtml()}</select>
-             <input type="number" id="schItemDur${si}" min="1" placeholder="秒">
-             <button class="btn" onclick="schAddItem(${si})">添加</button>
-           </div>`}
-    </div>`;
-  }).join('') || '<p class="muted" style="margin-top:12px">暂无时段</p>';
-  if (schTimeEditing >= 0 && schedules[schTimeEditing]) {
-    $('#editStart').value = schedules[schTimeEditing].startMinute;
-    $('#editEnd').value = schedules[schTimeEditing].endMinute;
-  }
-}
-
-// 时段内的拖动排序（仅同一时段内）
-let schDragFrom = null;
-const schList = $('#schList');
-const clearSchDragMarks = () => {
-  schList.querySelectorAll('tr').forEach(el => el.classList.remove('dragging', 'drop-target'));
-};
-schList.addEventListener('dragstart', (e) => {
-  const tr = e.target.closest('tr[data-sch]');
-  if (!tr) return;
-  schDragFrom = { sch: +tr.dataset.sch, index: +tr.dataset.index };
-  e.dataTransfer.effectAllowed = 'move';
-  try { e.dataTransfer.setData('text/plain', ''); } catch {}
-  tr.classList.add('dragging');
-});
-schList.addEventListener('dragend', () => { schDragFrom = null; clearSchDragMarks(); });
-schList.addEventListener('dragover', (e) => {
-  const tr = e.target.closest('tr[data-sch]');
-  if (!tr || !schDragFrom || +tr.dataset.sch !== schDragFrom.sch) return;
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
-  clearSchDragMarks();
-  tr.classList.add('drop-target');
-});
-schList.addEventListener('drop', (e) => {
-  if (!schDragFrom) return;
-  const tr = e.target.closest('tr[data-sch]');
-  if (!tr || +tr.dataset.sch !== schDragFrom.sch) return;
-  e.preventDefault();
-  const items = schedules[schDragFrom.sch].items;
-  const to = +tr.dataset.index;
-  if (to !== schDragFrom.index) {
-    const [moved] = items.splice(schDragFrom.index, 1);
-    items.splice(to, 0, moved);
-  }
-  schDragFrom = null;
-  renderSchedules();
-});
-
-window.schStartEditTime = (si) => { schTimeEditing = si; renderSchedules(); };
-window.schCancelTime = () => { schTimeEditing = -1; renderSchedules(); };
-window.schSaveTime = async (si) => {
-  const st = +$('#editStart').value, en = +$('#editEnd').value;
-  if (st === en) return toast('开始与结束时间不能相同');
-  const s = schedules[si];
-  try {
-    await api('PUT', '/api/schedules/' + s.id, {
-      startMinute: st, endMinute: en, enabled: s.enabled, items: s.items,
-    });
-    schTimeEditing = -1;
-    toast('时间已保存');
-    loadSchedules();
-  } catch {}
-};
-window.schAddItem = (si) => {
-  if (schedules[si].items.length) return toast('一个时段只能有一个内容，请用「更换」');
-  const v = $(`#schItemMedia${si}`).value;
-  if (!v) return toast('请先上传媒体或添加直播源');
-  if (v.startsWith('live:')) {
-    schedules[si].items.push({ liveId: +v.slice(5) });
-  } else {
-    const mediaId = +v;
-    const m = media.find(x => x.id === mediaId);
-    if (!m) return toast('媒体不存在');
-    const dur = +$(`#schItemDur${si}`).value || null;
-    schedules[si].items.push({ mediaId, durationSec: m.kind === 'IMAGE' ? dur : null });
-  }
-  renderSchedules();
-};
-window.schReplaceItem = (si) => {
-  const v = $(`#schItemMedia${si}`).value;
-  if (!v) return toast('请选择要替换的内容');
-  let item;
-  if (v.startsWith('live:')) {
-    item = { liveId: +v.slice(5) };
-  } else {
-    const mediaId = +v;
-    const m = media.find(x => x.id === mediaId);
-    if (!m) return toast('媒体不存在');
-    const dur = +$(`#schItemDur${si}`).value || null;
-    item = { mediaId, durationSec: m.kind === 'IMAGE' ? dur : null };
-  }
-  schedules[si].items = [item];
-  renderSchedules();
-  toast('已替换，点「保存」生效');
-};
-window.schRmItem = (si, i) => { schedules[si].items.splice(i, 1); renderSchedules(); };
-// 启用/停用立即生效（与「修改时间」一致），避免切页签后状态丢失
-window.toggleSch = async (si) => {
-  const s = schedules[si];
-  const next = !s.enabled;
-  try {
-    await api('PUT', '/api/schedules/' + s.id, {
-      startMinute: s.startMinute, endMinute: s.endMinute, enabled: next, items: s.items,
-    });
-    toast(next ? '时段已启用' : '时段已停用');
-    loadSchedules();
-  } catch {}
-};
-window.saveSch = async (si) => {
-  const s = schedules[si];
-  if (!s.items.length) return toast('时段节目单不能为空');
-  try {
-    await api('PUT', '/api/schedules/' + s.id, {
-      startMinute: s.startMinute, endMinute: s.endMinute, enabled: s.enabled, items: s.items,
-    });
-    toast('时段已保存');
-    loadSchedules();
-  } catch {}
-};
-window.delSch = async (si) => {
-  if (confirm('删除该时段？')) {
-    await api('DELETE', '/api/schedules/' + schedules[si].id);
-    toast('已删除'); loadSchedules();
-  }
-};
-$('#schAdd').onclick = async () => {
-  const v = $('#schMedia').value; if (!v) return toast('请先上传媒体或添加直播源');
-  let item;
-  if (v.startsWith('live:')) {
-    item = { liveId: +v.slice(5) };
-  } else {
-    const mediaId = +v;
-    const m = media.find(x => x.id === mediaId);
-    if (!m) return toast('媒体不存在');
-    item = { mediaId, durationSec: m.kind === 'IMAGE' ? (+$('#schDur').value || null) : null };
-  }
-  try {
-    await api('POST', '/api/schedules', {
-      startMinute: +$('#schStart').value, endMinute: +$('#schEnd').value,
-      items: [item],
-    });
-    toast('时段已添加，修改内容后点「保存」'); loadSchedules();
-  } catch {}
-};
-
-function load() {
-  const tab = document.querySelector('nav button.on').dataset.tab;
-  if (tab === 'media') loadMedia();
-  else if (tab === 'program') loadProgram();
-  else if (tab === 'live') loadLive();
-  else if (tab === 'schedules') loadSchedules();
-}
-
-// ---------- 认证 ----------
-async function checkAuth() {
-  try {
-    const me = await fetch('/api/me').then(r => r.ok ? r.json() : null);
-    if (me && me.username) {
-      $('#whoLabel').textContent = me.username;
-      $('#userPanel').classList.remove('hidden');
-      $('#loginForm').classList.add('hidden');
-      return true;
-    }
-  } catch {}
-  showLogin(); return false;
-}
-function showLogin() {
-  document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
-  document.querySelector('nav').classList.add('hidden');
-  $('#userPanel').classList.add('hidden');
-  $('#loginForm').classList.remove('hidden');
-}
-function showMain() {
-  document.querySelector('nav').classList.remove('hidden');
-  // 恢复媒体库为初始 tab，且只显示当前页签的内容
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === 'media'));
-  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-media'));
-}
-$('#loginBtn').onclick = async () => {
-  try {
-    await api('POST', '/api/login', { username: $('#loginUser').value, password: $('#loginPass').value });
-    $('#loginPass').value = '';
-    await checkAuth();
-    showMain();
-    load();
-  } catch {}
-};
-$('#loginPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#loginBtn').click(); });
-$('#logoutBtn').onclick = async () => {
-  await api('POST', '/api/logout');
-  showLogin();
-};
-$('#openPwd').onclick = () => { $('#pwdModal').classList.add('show'); };
-$('#cancelPwd').onclick = () => { $('#pwdModal').classList.remove('show'); ['oldPwd','newPwd','newPwd2'].forEach(id=>$('#'+id).value=''); };
-$('#pwdModal').onclick = (e) => { if (e.target.id === 'pwdModal') $('#cancelPwd').click(); };
-$('#savePwd').onclick = async () => {
-  const oldP = $('#oldPwd').value, n1 = $('#newPwd').value, n2 = $('#newPwd2').value;
-  if (!n1 || n1.length < 4) return toast('新密码至少 4 位');
-  if (n1 !== n2) return toast('两次输入不一致');
-  try { await api('PUT', '/api/password', { oldPassword: oldP, newPassword: n1 }); toast('密码已更新'); $('#cancelPwd').click(); } catch {}
-};
-
-checkAuth().then(ok => { if (ok) { showMain(); load(); } });
-</script>
-</body>
+
 </html>

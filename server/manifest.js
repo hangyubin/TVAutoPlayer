@@ -91,4 +91,4 @@ function buildManifest(db, contentVersion) {
 
 const newScheduleId = () => crypto.randomUUID();
 
-module.exports = { buildManifest, validateSchedule, newScheduleId, overlaps };
+module.exports = { buildManifest, validateSchedule, newScheduleId };

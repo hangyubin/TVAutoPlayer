@@ -6,8 +6,10 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { Readable } = require('stream');
 const { spawnSync } = require('child_process');
 const db = require('./db');
+const alist = require('./alist');
 const { buildManifest, validateSchedule, newScheduleId } = require('./manifest');
 
 // 同目录 config.env 存放本机配置（KEY=VALUE，# 为注释）。
@@ -33,6 +35,29 @@ loadConfigFile();
 
 const PORT = process.env.PORT || 8300;
 const MEDIA_DIR = path.join(__dirname, 'media');
+fs.mkdirSync(MEDIA_DIR, { recursive: true }); // 重封装临时文件与历史文件仍然读这里
+// 主媒体库的实际存储目录可以在后台改到任意文件夹；这里缓存解析结果，
+// 改动后调用 resetMainDir() 失效，后续上传、扫描、/media 都落到新目录。
+let mainDirCache = null;
+function mainDir() {
+  if (mainDirCache) return mainDirCache;
+  let row = null;
+  try { row = db.prepare('SELECT path FROM libraries WHERE is_main = 1 LIMIT 1').get(); } catch { /* 表尚未建好 */ }
+  mainDirCache = row && row.path ? row.path : MEDIA_DIR;
+  return mainDirCache;
+}
+const resetMainDir = () => { mainDirCache = null; };
+// 历史文件可能留在旧目录：读取和删除都要两个目录都看一遍
+const storedFile = (name) => {
+  for (const dir of [mainDir(), MEDIA_DIR]) {
+    const full = path.join(dir, name);
+    if (fs.existsSync(full)) return full;
+  }
+  return null;
+};
+const removeStoredFile = (name) => {
+  for (const dir of new Set([mainDir(), MEDIA_DIR])) fs.rmSync(path.join(dir, name), { force: true });
+};
 const MAX_UPLOAD_GB = Math.max(1, Number(process.env.MAX_UPLOAD_GB) || 8);
 const MAX_UPLOAD = MAX_UPLOAD_GB * 1024 * 1024 * 1024;
 // 媒体库现在由后台管理；MEDIA_EXTRA_DIRS 仅作为兼容入口，启动时自动注册为媒体库。
@@ -42,6 +67,35 @@ const EXTRA_MEDIA_DIRS = (process.env.MEDIA_EXTRA_DIRS || '')
   .filter(Boolean)
   .map((dir) => path.resolve(dir));
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // 可选环境变量口令（兼容旧方案）
+
+// ---------- 网络存储凭证 ----------
+// OpenList 账号密码不能明文落库：用本机密钥文件做 AES-256-GCM 加密，
+// 密钥文件与数据库同目录，权限 600，随数据库一起备份。
+const SECRET_FILE = path.join(__dirname, 'data', '.secret');
+function secretKey() {
+  try { return fs.readFileSync(SECRET_FILE); } catch { /* 首次使用，下面生成 */ }
+  fs.mkdirSync(path.dirname(SECRET_FILE), { recursive: true });
+  const key = crypto.randomBytes(32);
+  fs.writeFileSync(SECRET_FILE, key, { mode: 0o600 });
+  return key;
+}
+function encryptSecret(text) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', secretKey(), iv);
+  const data = Buffer.concat([cipher.update(String(text), 'utf8'), cipher.final()]);
+  return `v1:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${data.toString('base64')}`;
+}
+function decryptSecret(text) {
+  if (!text || !String(text).startsWith('v1:')) return '';
+  const [, iv, tag, data] = String(text).split(':');
+  try {
+    const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(tag, 'base64'));
+    return Buffer.concat([decipher.update(Buffer.from(data, 'base64')), decipher.final()]).toString('utf8');
+  } catch {
+    return '';
+  }
+}
 
 // ---------- 密码 / 会话 ----------
 const scrypt = (pwd, saltHex) => {
@@ -96,6 +150,7 @@ const MIME = {
   '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.webm': 'video/webm',
   '.ts': 'video/mp2t', '.m4v': 'video/mp4', '.mov': 'video/quicktime',
   '.html': 'text/html; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
 };
 
 const kindOf = (filename) => {
@@ -294,7 +349,7 @@ function saveUpload(req) {
     const m = /boundary=(?:"([^"]+)"|([^\s;]+))/.exec(contentType);
     if (!m) { req.resume(); return reject(clientError('缺少 boundary')); }
     const boundary = `--${m[1] || m[2]}`;
-    const tmp = path.join(MEDIA_DIR, `.upload-${crypto.randomUUID()}.tmp`);
+    const tmp = path.join(mainDir(), `.upload-${crypto.randomUUID()}.tmp`);
     const out = fs.createWriteStream(tmp);
     let size = 0, failed = false;
     const fail = (e) => {
@@ -397,11 +452,12 @@ const extractAndHash = (src, start, end, dest) => new Promise((resolve, reject) 
 // 启动时清理异常退出遗留的上传/重封装临时文件，避免长期占用磁盘
 (function cleanupTempFiles() {
   let names = [];
-  try { names = fs.readdirSync(MEDIA_DIR); } catch { return; }
+  const dir = mainDir();
+  try { names = fs.readdirSync(dir); } catch { return; }
   const cutoff = Date.now() - 6 * 3600 * 1000;
   for (const name of names) {
     if (!/^\.(upload|pending|remux)-/.test(name)) continue;
-    const full = path.join(MEDIA_DIR, name);
+    const full = path.join(dir, name);
     try {
       if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { force: true });
     } catch { /* 忽略单个文件清理失败 */ }
@@ -495,14 +551,20 @@ function listLibraries() {
     FROM libraries l
     ORDER BY l.is_main DESC, l.id
   `).all().map((row) => {
-    let exists = false;
-    try { exists = fs.statSync(row.path).isDirectory(); } catch { /* 目录不可访问 */ }
+    const provider = row.provider || 'LOCAL';
+    let exists = provider !== 'LOCAL';
+    if (provider === 'LOCAL') {
+      try { exists = fs.statSync(row.path).isDirectory(); } catch { /* 目录不可访问 */ }
+    }
     return {
       id: row.id,
       name: row.name,
       path: row.path,
       isMain: !!row.is_main,
       enabled: !!row.enabled,
+      provider,
+      baseUrl: row.base_url || '',
+      rootPath: row.root_path || '',
       mediaCount: row.mediaCount,
       exists,
     };
@@ -514,7 +576,7 @@ function listLibraries() {
  * 主库是服务端自己的目录，文件直接改名入库；外部库用链接引用，原文件不动。
  */
 async function scanLibraries(libs) {
-  const MAX_FILES = 300;
+  const MAX_FILES = 5000;
   const files = [];
   let truncated = false;
   let already = 0;
@@ -599,7 +661,7 @@ async function scanLibraries(libs) {
         return;
       }
       const storeName = `${sha256.slice(0, 16)}${path.extname(name).toLowerCase()}`;
-      const target = path.join(MEDIA_DIR, storeName);
+      const target = path.join(mainDir(), storeName);
       fs.rmSync(target, { force: true });
       if (fromTemp) {
         // 重封装后的临时文件在媒体目录里，必须先把内容落盘再删源文件
@@ -642,6 +704,126 @@ async function scanLibraries(libs) {
   };
 }
 
+/**
+ * 扫描 OpenList / AList 媒体库：只读目录树，登记路径与大小，不下载内容、不计算哈希。
+ * 播放时才按需换取直链，所以整库秒级完成。
+ */
+async function scanRemoteLibrary(lib) {
+  const MAX_FILES = 5000;
+  const creds = {
+    baseUrl: lib.base_url,
+    username: lib.username,
+    password: decryptSecret(lib.password),
+  };
+  const errors = [];
+  const found = [];
+  let truncated = false;
+
+  const walk = async (dir, depth) => {
+    if (truncated || depth > 5) return;
+    let entries;
+    try {
+      entries = await alist.list(creds.baseUrl, creds.username, creds.password, dir);
+    } catch (e) {
+      errors.push(`${dir}: ${e.message}`);
+      return;
+    }
+    for (const entry of entries) {
+      if (truncated) return;
+      if (entry.name.startsWith('.')) continue;
+      const full = `${dir.replace(/\/+$/, '')}/${entry.name}`;
+      if (entry.isDir) {
+        await walk(full, depth + 1);
+        continue;
+      }
+      if (!kindOf(entry.name)) continue;
+      found.push({ path: full, name: entry.name, size: entry.size });
+      if (found.length >= MAX_FILES) { truncated = true; return; }
+    }
+  };
+  await walk(lib.root_path || '/', 0);
+
+  const known = new Set(
+    db.prepare('SELECT remote_path FROM media WHERE library_id = ?').all(lib.id)
+      .map((row) => row.remote_path)
+  );
+  const insert = db.prepare(
+    'INSERT INTO media (filename, orig_name, sha256, kind, size, library_id, remote_path) VALUES (?,?,?,?,?,?,?)'
+  );
+
+  let added = 0, already = 0;
+  for (const item of found) {
+    if (known.has(item.path)) { already += 1; continue; }
+    const kind = kindOf(item.name);
+    const fp = crypto.createHash('sha256')
+      .update(`${lib.id}:${item.path}`).digest('hex').slice(0, 16);
+    insert.run(
+      `ol_${fp}${path.extname(item.name).toLowerCase()}`,
+      item.name.slice(0, 120), '', kind, item.size, lib.id, item.path
+    );
+    added += 1;
+  }
+
+  if (added) notifyContentChanged();
+  console.log(`[scan] ${lib.name} 远程扫描 ${found.length} 个，新增 ${added}，已入库 ${already}，失败 ${errors.length}`);
+  return {
+    libraries: [{ id: lib.id, name: lib.name }],
+    limit: MAX_FILES, scanned: found.length, already, added, skipped: 0,
+    failed: errors.length, truncated, errors: errors.slice(0, 10),
+  };
+}
+
+/**
+ * 把 OpenList 上的媒体流式转发给终端。
+ * 每次请求都重新换直链，因此直链过期不会让播放永久失败；
+ * Range 原样透传，电视可以正常拖动进度。
+ */
+async function proxyRemoteMedia(req, res, name, row) {
+  const mime = MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
+  let target;
+  try {
+    target = await alist.rawUrl(row.base_url, row.username, decryptSecret(row.password), row.remote_path);
+  } catch (e) {
+    return send(res, 502, { error: `获取云盘直链失败：${e.message}` });
+  }
+
+  const controller = new AbortController();
+  res.on('close', () => controller.abort());
+  const headers = {};
+  if (req.headers.range) headers.Range = req.headers.range;
+
+  let upstream;
+  try {
+    upstream = await fetch(target, { headers, redirect: 'follow', signal: controller.signal });
+  } catch (e) {
+    return send(res, e.name === 'AbortError' ? 499 : 504, { error: `云盘无响应：${e.message}` });
+  }
+  if (!upstream.ok && upstream.status !== 206) {
+    const body = await upstream.text().catch(() => '');
+    return send(res, 502, { error: `云盘返回 ${upstream.status}${body ? `：${body.slice(0, 120)}` : ''}` });
+  }
+
+  const out = {
+    'Content-Type': upstream.headers.get('content-type') || mime,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+  };
+  const length = upstream.headers.get('content-length');
+  const contentRange = upstream.headers.get('content-range');
+  if (length) out['Content-Length'] = length;
+  if (contentRange) out['Content-Range'] = contentRange;
+
+  res.writeHead(upstream.status === 206 ? 206 : 200, out);
+  if (req.method === 'HEAD') {
+    if (upstream.body) upstream.body.cancel().catch(() => {});
+    return res.end();
+  }
+  if (!upstream.body) return res.end();
+  Readable.fromWeb(upstream.body)
+    .on('error', () => res.destroy())
+    .pipe(res);
+}
+
 // ---------- 路由 ----------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -681,8 +863,16 @@ const server = http.createServer(async (req, res) => {
     }
     if (p.startsWith('/media/') && (req.method === 'GET' || req.method === 'HEAD')) {
       const name = path.basename(p.slice(7));
-      const file = path.join(MEDIA_DIR, name);
-      if (!fs.existsSync(file)) return send(res, 404, { error: '媒体不存在' });
+      // OpenList 媒体没有本地文件：实时换直链后按 Range 转发给电视。
+      // 电视端始终只连本服务，云盘直链和账号凭证都不会暴露出去。
+      const remote = db.prepare(`
+        SELECT m.remote_path, l.base_url, l.username, l.password
+        FROM media m JOIN libraries l ON l.id = m.library_id
+        WHERE m.filename = ? AND m.remote_path IS NOT NULL
+      `).get(name);
+      if (remote) return proxyRemoteMedia(req, res, name, remote);
+      const file = storedFile(name);
+      if (!file) return send(res, 404, { error: '媒体不存在' });
       const stat = fs.statSync(file);
       const mime = MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
       const range = req.headers['range'];
@@ -712,6 +902,16 @@ const server = http.createServer(async (req, res) => {
     if ((p === '/' || p === '/admin') && req.method === 'GET') {
       return send(res, 200, fs.readFileSync(path.join(__dirname, 'public', 'admin.html')),
         'text/html; charset=utf-8');
+    }
+    // 前端静态资源（CSS/JS），按子目录组织，便于拆分 admin.html 维护
+    if (req.method === 'GET' && (p.startsWith('/css/') || p.startsWith('/js/'))) {
+      const rel = p.replace(/^\/+/, '');
+      const file = path.join(__dirname, 'public', rel);
+      const pubRoot = path.join(__dirname, 'public') + path.sep;
+      if (!file.startsWith(pubRoot)) return send(res, 403, { error: '禁止访问' });
+      if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, { error: '资源不存在' });
+      const mime = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+      return send(res, 200, fs.readFileSync(file), mime);
     }
     // 浏览器自动请求，不需要登录也不需要内容
     if (p === '/favicon.ico') return send(res, 204);
@@ -771,9 +971,44 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/libraries' && req.method === 'POST') {
       const body = await jsonBody(req);
       const name = String(body.name || '').trim();
-      const rawPath = String(body.path || '').trim();
       if (!name) return bad(res, '请填写媒体库名称');
       if (name.length > 40) return bad(res, '名称不能超过 40 个字符');
+      if (db.prepare('SELECT 1 FROM libraries WHERE name = ?').get(name)) {
+        return bad(res, '媒体库名称重复，请换一个');
+      }
+
+      if (String(body.provider || 'LOCAL').toUpperCase() === 'ALIST') {
+        const baseUrl = alist.normalizeBase(body.baseUrl);
+        const username = String(body.username || '').trim();
+        const password = String(body.password || '');
+        const rootPath = String(body.rootPath || '/').trim() || '/';
+        if (!/^https?:\/\/.+/i.test(baseUrl)) return bad(res, '请填写 OpenList 地址，例如 http://192.168.2.249:5244');
+        if (!username || !password) return bad(res, '请填写 OpenList 账号和密码');
+        if (!rootPath.startsWith('/')) return bad(res, '目录路径必须以 / 开头');
+        // 建库前先真实登录并列一次目录，避免存进一个连不上的库
+        let entries;
+        try {
+          entries = await alist.list(baseUrl, username, password, rootPath);
+        } catch (e) {
+          return bad(res, `连接 OpenList 失败：${e.message}`);
+        }
+        const synthetic = `alist://${baseUrl.replace(/^https?:\/\//i, '')}${rootPath}`;
+        if (db.prepare('SELECT 1 FROM libraries WHERE path = ?').get(synthetic)) {
+          return bad(res, '这个 OpenList 目录已经在媒体库列表里了');
+        }
+        const info = db.prepare(`
+          INSERT INTO libraries (name, path, provider, base_url, username, password, root_path)
+          VALUES (?,?,?,?,?,?,?)
+        `).run(name, synthetic, 'ALIST', baseUrl, username, encryptSecret(password), rootPath);
+        console.log(`[library] 新增 OpenList 媒体库 ${name} -> ${baseUrl}${rootPath}`);
+        return ok(res, {
+          id: Number(info.lastInsertRowid),
+          entries: entries.length,
+          libraries: listLibraries(),
+        });
+      }
+
+      const rawPath = String(body.path || '').trim();
       if (!rawPath) return bad(res, '请填写文件夹路径');
       if (!path.isAbsolute(rawPath)) {
         return bad(res, '请填写绝对路径，例如 /mnt/nas/videos 或 D:\\Videos');
@@ -785,12 +1020,77 @@ const server = http.createServer(async (req, res) => {
       if (db.prepare('SELECT 1 FROM libraries WHERE path = ?').get(resolved)) {
         return bad(res, '这个文件夹已经在媒体库列表里了');
       }
-      if (db.prepare('SELECT 1 FROM libraries WHERE name = ?').get(name)) {
-        return bad(res, '媒体库名称重复，请换一个');
-      }
       const info = db.prepare('INSERT INTO libraries (name, path) VALUES (?, ?)').run(name, resolved);
       console.log(`[library] 新增媒体库 ${name} -> ${resolved}`);
       return ok(res, { id: Number(info.lastInsertRowid), libraries: listLibraries() });
+    }
+
+    // 目录浏览：本地目录树
+    if (p === '/api/browse/local' && req.method === 'POST') {
+      const body = await jsonBody(req);
+      if (!body.path) {
+        // 未指定起点时返回可浏览的根：Windows 列出存在的盘符，其余系统为 /
+        const roots = [];
+        if (process.platform === 'win32') {
+          for (let i = 65; i <= 90; i += 1) {
+            const drive = `${String.fromCharCode(i)}:\\`;
+            try { if (fs.statSync(drive).isDirectory()) roots.push(drive); } catch { /* 盘符不存在 */ }
+          }
+        } else {
+          roots.push('/');
+        }
+        return ok(res, { path: null, parent: null, roots, dirs: [] });
+      }
+      const target = path.resolve(String(body.path));
+      let entries;
+      try {
+        entries = fs.readdirSync(target, { withFileTypes: true });
+      } catch (e) {
+        return bad(res, `目录不可访问：${e.message}`);
+      }
+      const dirs = entries
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+        .map((e) => ({ name: e.name, path: path.join(target, e.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+      return ok(res, {
+        path: target,
+        parent: path.dirname(target) === target ? null : path.dirname(target),
+        dirs: dirs.slice(0, 500),
+      });
+    }
+
+    // 目录浏览：OpenList 目录树（未入库时用请求里的临时凭证，入库后用库里的凭证）
+    if (p === '/api/browse/openlist' && req.method === 'POST') {
+      const body = await jsonBody(req);
+      let baseUrl, username, password;
+      if (body.libraryId) {
+        const row = db.prepare('SELECT * FROM libraries WHERE id = ?').get(Number(body.libraryId));
+        if (!row || row.provider !== 'ALIST') return bad(res, '媒体库不存在');
+        baseUrl = row.base_url;
+        username = row.username;
+        password = decryptSecret(row.password);
+      } else {
+        baseUrl = alist.normalizeBase(body.baseUrl);
+        username = String(body.username || '').trim();
+        password = String(body.password || '');
+        if (!/^https?:\/\/.+/i.test(baseUrl)) return bad(res, '请先填写 OpenList 地址');
+        if (!username || !password) return bad(res, '请先填写 OpenList 账号密码');
+      }
+      const target = String(body.path || '/').trim() || '/';
+      let entries;
+      try {
+        entries = await alist.list(baseUrl, username, password, target);
+      } catch (e) {
+        return bad(res, e.message);
+      }
+      const parent = target === '/' ? null : path.posix.dirname(target);
+      return ok(res, {
+        path: target,
+        parent,
+        dirs: entries.filter((e) => e.isDir)
+          .map((e) => ({ name: e.name, path: `${target.replace(/\/+$/, '')}/${e.name}` }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'zh')),
+      });
     }
     const libMatch = /^\/api\/libraries\/(\d+)$/.exec(p);
     if (libMatch && req.method === 'PUT') {
@@ -808,19 +1108,46 @@ const server = http.createServer(async (req, res) => {
       if (body.enabled !== undefined) {
         db.prepare('UPDATE libraries SET enabled = ? WHERE id = ?').run(body.enabled ? 1 : 0, row.id);
       }
+      // 本地库可以改挂载目录：远程库没有本地路径，改不了
+      if (body.path !== undefined) {
+        if (row.provider !== 'LOCAL') return bad(res, 'OpenList 媒体库不能修改本地路径');
+        const raw = String(body.path).trim();
+        if (!raw || !path.isAbsolute(raw)) return bad(res, '请填写文件夹的绝对路径');
+        const dir = path.resolve(raw);
+        let st = null;
+        try { st = fs.statSync(dir); } catch { /* 不存在，下面统一报错 */ }
+        if (!st || !st.isDirectory()) return bad(res, `文件夹不存在：${dir}`);
+        try { fs.accessSync(dir, fs.constants.W_OK); } catch { return bad(res, `文件夹不可写入：${dir}`); }
+        // 把库里已有的文件搬到新目录，避免换目录后旧素材失效；
+        // 跨分区 rename 会失败，退回复制后删源。
+        const oldDir = row.path && path.resolve(row.path);
+        if (oldDir && oldDir !== dir) {
+          for (const item of db.prepare('SELECT filename, remote_path FROM media WHERE library_id = ?').all(row.id)) {
+            if (item.remote_path) continue;
+            const src = path.join(oldDir, item.filename);
+            const dest = path.join(dir, item.filename);
+            if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
+            try { fs.renameSync(src, dest); } catch {
+              try { fs.copyFileSync(src, dest); fs.rmSync(src, { force: true }); } catch { /* 单个文件失败不影响换目录 */ }
+            }
+          }
+        }
+        db.prepare('UPDATE libraries SET path = ? WHERE id = ?').run(dir, row.id);
+        resetMainDir();
+      }
       return ok(res, { libraries: listLibraries() });
     }
     if (libMatch && req.method === 'DELETE') {
       const row = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libMatch[1]);
       if (!row) return send(res, 404, { error: '媒体库不存在' });
       if (row.is_main) return bad(res, '主媒体库不能删除');
-      const items = db.prepare('SELECT id, filename FROM media WHERE library_id = ?').all(row.id);
+      const items = db.prepare('SELECT id, filename, remote_path FROM media WHERE library_id = ?').all(row.id);
       let disabledSchedules = 0;
       for (const item of items) {
         db.prepare('DELETE FROM media WHERE id = ?').run(item.id);
         disabledSchedules += detachFromSchedules((it) => it.mediaId === item.id);
-        // 只删媒体目录里的引用或副本，外部库的源文件保持原样
-        fs.rmSync(path.join(MEDIA_DIR, item.filename), { force: true });
+        // 只删媒体目录里的引用或副本；远程库没有本地文件，外部库的源文件保持原样
+        if (!item.remote_path) removeStoredFile(item.filename);
       }
       db.prepare('DELETE FROM libraries WHERE id = ?').run(row.id);
       if (items.length) notifyContentChanged();
@@ -830,8 +1157,9 @@ const server = http.createServer(async (req, res) => {
     const libScan = /^\/api\/libraries\/(\d+)\/scan$/.exec(p);
     if (libScan && req.method === 'POST') {
       req.resume();
-      const lib = db.prepare('SELECT id, name, path, is_main FROM libraries WHERE id = ?').get(libScan[1]);
+      const lib = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libScan[1]);
       if (!lib) return send(res, 404, { error: '媒体库不存在' });
+      if (lib.provider === 'ALIST') return ok(res, await scanRemoteLibrary(lib));
       return ok(res, await scanLibraries([lib]));
     }
 
@@ -856,6 +1184,11 @@ const server = http.createServer(async (req, res) => {
         });
       }
       let up = await saveUpload(req);
+      // 文件夹上传时保留相对路径（webkitRelativePath），如 火影/第01集.mp4
+      // 完整保留用户选中的文件夹名，便于按文件夹分类展示
+      const rel = (url.searchParams.get('relpath') || '').replace(/\\/g, '/').replace(/\.\.\/|^\//g, '');
+      const seg = rel.split('/').filter(Boolean);
+      const subPath = seg.length ? seg.join('/') : null;
       const kind = kindOf(up.filename);
       if (!kind) { fs.rmSync(up.tmp, { force: true }); return bad(res, '不支持的格式（仅图片/视频）'); }
       if (kind === 'VIDEO' && path.extname(up.filename).toLowerCase() === '.mkv' && isLegacyMkv(up.tmp, up.start)) {
@@ -872,7 +1205,7 @@ const server = http.createServer(async (req, res) => {
         console.log(`[mkv] ${up.filename} 为旧封装，已自动重封装`);
       }
       const ext = path.extname(up.filename).toLowerCase();
-      const pendingPath = path.join(MEDIA_DIR, `.pending-${crypto.randomUUID()}${ext}`);
+      const pendingPath = path.join(mainDir(), `.pending-${crypto.randomUUID()}${ext}`);
       let sha256;
       if (up.start === 0) {
         // Remux output is already a plain media file, so move it instead of copying.
@@ -888,13 +1221,13 @@ const server = http.createServer(async (req, res) => {
         return ok(res, { ...exists, duplicated: true });
       }
       const storeName = `${sha256.slice(0, 16)}${ext}`;
-      const target = path.join(MEDIA_DIR, storeName);
+      const target = path.join(mainDir(), storeName);
       if (fs.existsSync(target)) fs.rmSync(target, { force: true });
       // Same-folder rename: the file is never copied a second time.
       fs.renameSync(pendingPath, target);
       const info = db.prepare(
-        'INSERT INTO media (filename, orig_name, sha256, kind, size, library_id) VALUES (?,?,?,?,?,?)'
-      ).run(storeName, up.filename.slice(0, 120), sha256, kind, up.size, MAIN_LIBRARY_ID);
+        'INSERT INTO media (filename, orig_name, sha256, kind, size, library_id, sub_path) VALUES (?,?,?,?,?,?,?)'
+      ).run(storeName, up.filename.slice(0, 120), sha256, kind, up.size, MAIN_LIBRARY_ID, subPath);
       notifyContentChanged();
       return ok(res, db.prepare('SELECT * FROM media WHERE id = ?').get(info.lastInsertRowid));
     }
@@ -904,7 +1237,7 @@ const server = http.createServer(async (req, res) => {
       if (!row) return send(res, 404, { error: '媒体不存在' });
       db.prepare('DELETE FROM media WHERE id = ?').run(row.id);
       const disabledSchedules = detachFromSchedules((it) => it.mediaId === row.id);
-      fs.rmSync(path.join(MEDIA_DIR, row.filename), { force: true });
+      if (!row.remote_path) removeStoredFile(row.filename);
       notifyContentChanged();
       return ok(res, { disabledSchedules });
     }
@@ -913,8 +1246,11 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/program' && req.method === 'GET') {
       const items = db.prepare(`
         SELECT pi.id, pi.media_id AS mediaId, pi.duration_sec AS durationSec,
-               m.orig_name AS name, m.kind FROM program_items pi
-        JOIN media m ON m.id = pi.media_id ORDER BY pi.position`).all();
+               m.orig_name AS name, m.kind, l.name AS libraryName, l.is_main AS libraryIsMain
+        FROM program_items pi
+        JOIN media m ON m.id = pi.media_id
+        LEFT JOIN libraries l ON l.id = m.library_id
+        ORDER BY pi.position`).all();
       return ok(res, items);
     }
     if (p === '/api/program' && req.method === 'PUT') {

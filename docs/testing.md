@@ -14,7 +14,7 @@
 10. 图片停留时间按 5、10、15、30、60 秒循环，非法旧值回退为 10 秒。
 11. 图片与视频混合列表保持选择顺序和媒体类型，旧播放项缺少类型时按视频兼容。
 12. 普通与跨午夜时间段均按“起始含、结束不含”匹配，开始与结束相同会被拒绝。
-13. 多个规则按保存顺序稳定解析；启用规则重叠时编辑器阻止保存，相邻规则允许保存。
+13. 多个规则按保存顺序稳定解析；启用规则重叠时管理后台拒绝保存，相邻规则允许保存。
 14. 当前无匹配规则时回退默认列表；默认列表为空但未来有时间段时，开机后保持等待并到点播放。
 15. 时间段 JSON 往返保留图片/视频类型，损坏条目不会导致其它有效规则或默认列表丢失。
 
@@ -22,12 +22,10 @@
 
 - `app/src/test/java/com/chenwei/tvautoplay/PlaybackPolicyTest.java`
 - `app/src/test/java/com/chenwei/tvautoplay/PlaylistBehaviorTest.java`
-- `app/src/test/java/com/chenwei/tvautoplay/MediaCatalogTest.java`
 - `app/src/test/java/com/chenwei/tvautoplay/MediaTypeDetectorTest.java`
 - `app/src/test/java/com/chenwei/tvautoplay/ImageDurationTest.java`
 - `app/src/test/java/com/chenwei/tvautoplay/ScheduleRuleTest.java`
 - `app/src/test/java/com/chenwei/tvautoplay/ScheduleResolverTest.java`
-- `app/src/test/java/com/chenwei/tvautoplay/ScheduleConflictDetectorTest.java`
 - `app/src/test/java/com/chenwei/tvautoplay/PlaybackConfigurationCodecTest.java`
 
 ## 自动化命令
@@ -74,9 +72,9 @@ GitHub Actions 工作流 `.github/workflows/android.yml` 会在 `main` 推送和
 - 分别在 720p、1080p、4K 输出下验证设置页无裁切、按钮可聚焦、文字可读。
 - 验证 1080p H.264/AAC；按现场需求增加 4K、HEVC、MKV 等样本。
 - 连续循环 8 小时，观察卡顿、音画同步、温度和内存。
-- 新增至少三个不重叠时间段，分别配置不同的图片/视频混合列表，确认列表可编辑、停用和删除。
+- 在管理后台新增至少三个不重叠时间段，分别配置不同的图片/视频混合列表，确认规则可编辑、停用和删除。
 - 验证相邻时间段在边界后 30 秒内切换，当前媒体不会因普通周期检查而反复从头播放。
-- 验证 22:00–06:00 跨午夜规则，并确认与 05:30–07:00 的启用规则会被阻止保存。
+- 验证 22:00–06:00 跨午夜规则，并确认与 05:30–07:00 的启用规则会被管理后台拒绝保存。
 - 清空默认列表、保留未来时间段并冷启动，确认等待页出现且规则生效后自动播放。
 
 ## 当前测试限制
