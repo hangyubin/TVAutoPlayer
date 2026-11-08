@@ -6,6 +6,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { Readable } = require('stream');
 const { spawnSync } = require('child_process');
 const db = require('./db');
@@ -162,8 +163,17 @@ const kindOf = (filename) => {
 
 // ---------- 工具 ----------
 function send(res, code, body, type = 'application/json; charset=utf-8') {
-  const data = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
-  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+  let data = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
+  if (data == null) data = '';
+  const headers = { 'Content-Type': type, 'Cache-Control': 'no-store' };
+  // 媒体库列表一次要返回上千行 JSON，局域网下也有近 1MB；压缩后约剩十分之一。
+  const accept = (res.req && res.req.headers['accept-encoding']) || '';
+  if (Buffer.byteLength(data) > 1024 && /\bgzip\b/.test(accept)) {
+    data = zlib.gzipSync(Buffer.isBuffer(data) ? data : Buffer.from(data));
+    headers['Content-Encoding'] = 'gzip';
+  }
+  headers['Content-Length'] = Buffer.byteLength(data);
+  res.writeHead(code, headers);
   res.end(data);
 }
 const ok = (res, body = {}) => send(res, 200, body);
@@ -575,7 +585,7 @@ function listLibraries() {
  * 扫描若干媒体库，把图片/视频登记进 media 表。
  * 主库是服务端自己的目录，文件直接改名入库；外部库用链接引用，原文件不动。
  */
-async function scanLibraries(libs) {
+async function scanLibraries(libs, progress = null) {
   const MAX_FILES = 5000;
   const files = [];
   let truncated = false;
@@ -619,6 +629,7 @@ async function scanLibraries(libs) {
     try { usable = fs.statSync(lib.path).isDirectory(); } catch { /* 跳过不可访问的库 */ }
     if (usable) walk(lib.path, lib, 0);
   }
+  if (progress) { progress.phase = 'hash'; progress.total = files.length; progress.scanned = 0; }
 
   const insertMedia = db.prepare(
     'INSERT INTO media (filename, orig_name, sha256, kind, size, library_id, source_path) VALUES (?,?,?,?,?,?,?)'
@@ -692,6 +703,12 @@ async function scanLibraries(libs) {
   for (let i = 0; i < files.length; i += CONCURRENCY) {
     await Promise.all(files.slice(i, i + CONCURRENCY).map(processOne));
     await new Promise((resolve) => setImmediate(resolve));
+    if (progress) {
+      progress.scanned = Math.min(i + CONCURRENCY, files.length);
+      progress.added = added;
+      progress.skipped = skipped;
+      progress.failed = failed;
+    }
   }
 
   if (added) notifyContentChanged();
@@ -708,7 +725,7 @@ async function scanLibraries(libs) {
  * 扫描 OpenList / AList 媒体库：只读目录树，登记路径与大小，不下载内容、不计算哈希。
  * 播放时才按需换取直链，所以整库秒级完成。
  */
-async function scanRemoteLibrary(lib) {
+async function scanRemoteLibrary(lib, progress = null) {
   const MAX_FILES = 5000;
   const creds = {
     baseUrl: lib.base_url,
@@ -728,6 +745,7 @@ async function scanRemoteLibrary(lib) {
       errors.push(`${dir}: ${e.message}`);
       return;
     }
+    if (progress) progress.scanned = found.length;
     for (const entry of entries) {
       if (truncated) return;
       if (entry.name.startsWith('.')) continue;
@@ -773,30 +791,86 @@ async function scanRemoteLibrary(lib) {
   };
 }
 
+// ---------- 扫描任务 ----------
+// 大目录扫描要跑几十秒，同步等结果时页面只能干转圈，还可能被反向代理超时掐断。
+// 改成后台任务 + 状态轮询：接口立刻返回，前端每秒取一次进度，同时防止重复触发。
+const scanTasks = new Map();
+
+function startScanTask(lib) {
+  const task = {
+    running: true, phase: 'walk', scanned: 0, total: 0,
+    added: 0, skipped: 0, failed: 0, error: '',
+    startedAt: Date.now(), finishedAt: 0,
+  };
+  scanTasks.set(lib.id, task);
+  const running = lib.provider === 'ALIST'
+    ? scanRemoteLibrary(lib, task)
+    : scanLibraries([lib], task);
+  running.then((result) => {
+    // 最终结果覆盖实时进度，前端拿到的计数是准确的。
+    Object.assign(task, result, { running: false, phase: 'done', finishedAt: Date.now() });
+  }).catch((e) => {
+    Object.assign(task, { running: false, phase: 'error', error: e.message, finishedAt: Date.now() });
+  });
+  return task;
+}
+
 /**
- * 把 OpenList 上的媒体流式转发给终端。
- * 每次请求都重新换直链，因此直链过期不会让播放永久失败；
- * Range 原样透传，电视可以正常拖动进度。
+ * 把 OpenList 上的媒体流式转发给终端，Range 原样透传，电视可以正常拖动进度。
+ * 直链按媒体库与云盘路径缓存，过期时由 401/403 触发重取，不会让播放永久失败。
  */
+// 云盘直链有有效期（通常 1~4 小时）。播放一个 MKV 会发多次 Range 请求（起播、拖动、
+// 缓冲补给），每次都去问一次 OpenList 会白白多出一次往返。这里按「媒体库 + 云盘路径」
+// 缓存直链；直链失效时上游回 401/403，丢掉缓存重取一次即可，用户无感。
+const RAW_URL_TTL_MS = 30 * 60 * 1000;
+const RAW_URL_CACHE_LIMIT = 500;
+const rawUrlCache = new Map();
+/** 与云盘建立连接最多等这么久，避免云盘挂死时请求一直悬着。 */
+const UPSTREAM_CONNECT_TIMEOUT_MS = 20000;
+
+async function remoteDirectUrl(row, remotePath, refresh = false) {
+  const key = `${row.library_id}|${remotePath}`;
+  const hit = rawUrlCache.get(key);
+  if (!refresh && hit && hit.expiresAt > Date.now()) return hit.url;
+  const url = await alist.rawUrl(row.base_url, row.username, decryptSecret(row.password), remotePath);
+  if (rawUrlCache.size >= RAW_URL_CACHE_LIMIT) rawUrlCache.clear();
+  rawUrlCache.set(key, { url, expiresAt: Date.now() + RAW_URL_TTL_MS });
+  return url;
+}
+
+async function openUpstream(target, rangeHeader, clientSignal) {
+  const connecting = new AbortController();
+  const timer = setTimeout(() => connecting.abort(), UPSTREAM_CONNECT_TIMEOUT_MS);
+  try {
+    return await fetch(target, {
+      headers: rangeHeader ? { Range: rangeHeader } : {},
+      redirect: 'follow',
+      signal: AbortSignal.any([clientSignal, connecting.signal]),
+    });
+  } finally {
+    // 只限制「拿到响应头」的时间；之后的传输不受影响，否则长片会被中途掐断。
+    clearTimeout(timer);
+  }
+}
+
 async function proxyRemoteMedia(req, res, name, row) {
   const mime = MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
-  let target;
-  try {
-    target = await alist.rawUrl(row.base_url, row.username, decryptSecret(row.password), row.remote_path);
-  } catch (e) {
-    return send(res, 502, { error: `获取云盘直链失败：${e.message}` });
-  }
-
-  const controller = new AbortController();
-  res.on('close', () => controller.abort());
-  const headers = {};
-  if (req.headers.range) headers.Range = req.headers.range;
+  const client = new AbortController();
+  res.on('close', () => client.abort());
 
   let upstream;
   try {
-    upstream = await fetch(target, { headers, redirect: 'follow', signal: controller.signal });
+    const target = await remoteDirectUrl(row, row.remote_path);
+    upstream = await openUpstream(target, req.headers.range, client.signal);
+    // 直链已过期：云盘回 401/403，丢掉缓存重取一次再试。
+    if (upstream.status === 401 || upstream.status === 403) {
+      if (upstream.body) await upstream.body.cancel().catch(() => {});
+      const fresh = await remoteDirectUrl(row, row.remote_path, true);
+      upstream = await openUpstream(fresh, req.headers.range, client.signal);
+    }
   } catch (e) {
-    return send(res, e.name === 'AbortError' ? 499 : 504, { error: `云盘无响应：${e.message}` });
+    if (res.writableEnded || res.destroyed) return;
+    return send(res, client.signal.aborted ? 499 : 504, { error: `云盘无响应：${e.message}` });
   }
   if (!upstream.ok && upstream.status !== 206) {
     const body = await upstream.text().catch(() => '');
@@ -866,7 +940,7 @@ const server = http.createServer(async (req, res) => {
       // OpenList 媒体没有本地文件：实时换直链后按 Range 转发给电视。
       // 电视端始终只连本服务，云盘直链和账号凭证都不会暴露出去。
       const remote = db.prepare(`
-        SELECT m.remote_path, l.base_url, l.username, l.password
+        SELECT m.remote_path, l.id AS library_id, l.base_url, l.username, l.password
         FROM media m JOIN libraries l ON l.id = m.library_id
         WHERE m.filename = ? AND m.remote_path IS NOT NULL
       `).get(name);
@@ -911,7 +985,14 @@ const server = http.createServer(async (req, res) => {
       if (!file.startsWith(pubRoot)) return send(res, 403, { error: '禁止访问' });
       if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, { error: '资源不存在' });
       const mime = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
-      return send(res, 200, fs.readFileSync(file), mime);
+      const data = fs.readFileSync(file);
+      res.writeHead(200, {
+        'Content-Type': mime,
+        'Content-Length': data.length,
+        // 后台样式/脚本不常改，允许缓存 5 分钟，刷新页面不必重复下载。
+        'Cache-Control': 'public, max-age=300',
+      });
+      return res.end(data);
     }
     // 浏览器自动请求，不需要登录也不需要内容
     if (p === '/favicon.ico') return send(res, 204);
@@ -1159,8 +1240,14 @@ const server = http.createServer(async (req, res) => {
       req.resume();
       const lib = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libScan[1]);
       if (!lib) return send(res, 404, { error: '媒体库不存在' });
-      if (lib.provider === 'ALIST') return ok(res, await scanRemoteLibrary(lib));
-      return ok(res, await scanLibraries([lib]));
+      const existing = scanTasks.get(lib.id);
+      if (existing && existing.running) return ok(res, existing);
+      return ok(res, startScanTask(lib));
+    }
+    const libScanStatus = /^\/api\/libraries\/(\d+)\/scan\/status$/.exec(p);
+    if (libScanStatus && req.method === 'GET') {
+      const task = scanTasks.get(Number(libScanStatus[1]));
+      return ok(res, task || { running: false });
     }
 
     // ----- 媒体 -----

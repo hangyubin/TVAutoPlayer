@@ -391,9 +391,21 @@ function renderLibraries() {
 async function scanLibrary(id) {
   const lib = libraries.find(l => l.id === id);
   const btn = document.getElementById(`scan-lib-${id}`);
-  if (btn) { btn.disabled = true; btn.textContent = '扫描中...'; }
+  const label = (text) => { if (btn) btn.textContent = text; };
+  if (btn) btn.disabled = true;
+  label('扫描中 0');
   try {
-    const r = await api('POST', `/api/libraries/${id}/scan`, {});
+    await api('POST', `/api/libraries/${id}/scan`, {});
+    // 扫描在服务端后台跑，这里轮询进度：大目录下页面不会干等，也能看到处理到第几个。
+    let r = null;
+    for (let i = 0; i < 600; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      r = await api('GET', `/api/libraries/${id}/scan/status`);
+      if (!r.running) break;
+      label(`扫描中 ${r.scanned || 0}`);
+    }
+    if (!r || r.running) { toast('扫描仍在进行，稍后刷新媒体库查看结果'); return; }
+    if (r.error) { toast(`${lib ? lib.name : '媒体库'}：扫描失败 ${r.error}`); return; }
     let msg = `${lib ? lib.name : '媒体库'}：扫描 ${r.scanned} 个，新增 ${r.added}，重复 ${r.skipped}`;
     if (r.already) msg += `，已入库跳过 ${r.already}`;
     if (r.failed) msg += `，失败 ${r.failed}`;
@@ -403,8 +415,9 @@ async function scanLibrary(id) {
     await loadLibraries();
     if (r.errors && r.errors.length) console.warn('scan errors:', r.errors);
   } catch (e) {
-    // api() 已提示原因
-    if (btn) { btn.disabled = false; btn.textContent = '扫描'; }
+    // api() 已提示原因；扫描仍在服务端继续，刷新页面即可看到结果。
+  } finally {
+    if (btn) { btn.disabled = false; label('扫描'); }
   }
 }
 window.scanLibrary = scanLibrary;
