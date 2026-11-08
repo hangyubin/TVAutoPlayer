@@ -77,6 +77,8 @@ public final class MainActivity extends ComponentActivity {
     private TextView emptyMessage;
     private TextView errorMessage;
     private PlaybackConfigStore configStore;
+    /** True while the settings activity is on top; the player keeps running behind it. */
+    private boolean settingsOpen;
     /**
      * Applies audio track / volume / aspect ratio edits from the settings screen the moment
      * they are saved, while the player is still running behind the settings activity.
@@ -93,7 +95,6 @@ public final class MainActivity extends ComponentActivity {
                 }
             };
     private ExoPlayer player;
-    private boolean settingsOpen;
     private boolean selectionPromptAttempted;
     private boolean permissionRequested;
     private boolean usbScanInFlight;
