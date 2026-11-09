@@ -827,10 +827,24 @@ public final class MainActivity extends ComponentActivity {
         // Most TV boxes ship no AC-3 / E-AC-3 / DTS decoder, so the FFmpeg extension
         // covers those formats. EXTENSION_RENDERER_MODE_ON only falls back when the
         // platform cannot decode the format; AAC and friends still use hardware.
-        NextRenderersFactory renderersFactory = new NextRenderersFactory(this);
-        renderersFactory.setExtensionRendererMode(
-                DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
-        renderersFactory.setEnableDecoderFallback(true);
+        //
+        // The extension .so must be present for the target ABI (see build.gradle.kts).
+        // On emulators or exotic devices where it fails to load we fall back to the
+        // default factory so playback at least starts — the app won't crash and HW
+        // codecs that ARE available still work.
+        DefaultRenderersFactory renderersFactory;
+        try {
+            NextRenderersFactory next = new NextRenderersFactory(this);
+            next.setExtensionRendererMode(
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+            next.setEnableDecoderFallback(true);
+            renderersFactory = next;
+        } catch (UnsatisfiedLinkError | RuntimeException e) {
+            android.util.Log.w("MainActivity",
+                    "FFmpeg extension unavailable, falling back to default renderers: "
+                            + e.getMessage());
+            renderersFactory = new DefaultRenderersFactory(this);
+        }
         player = new ExoPlayer.Builder(this, renderersFactory)
                 .setAudioAttributes(
                         new AudioAttributes.Builder()

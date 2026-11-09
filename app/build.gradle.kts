@@ -10,14 +10,15 @@ android {
         applicationId = "com.chenwei.tvautoplay"
         minSdk = 23
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.9.0"
+        versionCode = 23
+        versionName = "1.9.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // FFmpeg 软解库每个架构约 5 MB，电视盒子基本都是 64 位 ARM，其余架构不打进包里。
+        // FFmpeg 软解库每个架构约 5 MB。arm64-v8a 是电视盒子主流，
+        // x86_64 给 Android 模拟器调试用（模拟器普遍没有 HEVC 硬解，必须靠扩展软解）。
         ndk {
-            abiFilters += "arm64-v8a"
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
 

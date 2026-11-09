@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## V1.9.1 - 2026-11-09
+
+### 修复
+
+- ABI 同时保留 arm64-v8a 和 x86_64，Android 模拟器也能加载 FFmpeg 扩展（模拟器普遍没有 HEVC 硬解，之前只留 arm64 会导致视频渲染器缺席，画面一直转圈）。
+- `NextRenderersFactory` 初始化加 try-catch，扩展加载失败时回退到默认工厂，播放器不会因此废掉。
+
 ## V1.9.0 - 2026-11-09
 
 - 开发人员：chenwei666
