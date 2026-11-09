@@ -38,8 +38,10 @@ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -937,17 +939,39 @@ public final class MainActivity extends ComponentActivity {
     /**
      * Flattens every audio track across all audio groups. A single MediaItem can expose several
      * audio groups (e.g. one per codec), so "track N" must be counted globally, not per group.
+     *
+     * <p>With the FFmpeg extension enabled the same physical track is reported by two renderers
+     * when both can decode it (AAC is the common case), which would otherwise show up as
+     * duplicate entries and a wrong "track 2/6" count. Entries are deduplicated by the track's
+     * identity, keeping the first decoder that can play it — renderers are built hardware first,
+     * so hardware decoding stays preferred.
      */
     private List<AudioTrackRef> audioTrackEntries() {
         List<AudioTrackRef> entries = new ArrayList<>();
         if (player == null) return entries;
+        Map<String, AudioTrackRef> unique = new LinkedHashMap<>();
         for (Tracks.Group group : player.getCurrentTracks().getGroups()) {
             if (group.getType() != C.TRACK_TYPE_AUDIO) continue;
             for (int i = 0; i < group.length; i++) {
-                entries.add(new AudioTrackRef(group, i));
+                AudioTrackRef ref = new AudioTrackRef(group, i);
+                String key = audioTrackKey(group.getTrackFormat(i));
+                AudioTrackRef kept = unique.get(key);
+                if (kept == null) {
+                    unique.put(key, ref);
+                } else if (!kept.group.isTrackSupported(kept.indexInGroup)
+                        && group.isTrackSupported(i)) {
+                    unique.put(key, ref);
+                }
             }
         }
+        entries.addAll(unique.values());
         return entries;
+    }
+
+    /** Identity of one physical audio track, stable across the renderers that report it. */
+    private static String audioTrackKey(Format format) {
+        return format.id + '|' + format.language + '|' + format.label + '|'
+                + format.codecs + '|' + format.channelCount + '|' + format.sampleRate;
     }
 
     private void selectAudioTrack(int index) {
