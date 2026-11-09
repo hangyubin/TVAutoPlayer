@@ -61,17 +61,17 @@
     <string name="usb_status_value">USB folder: %1$d media files</string>
     <string name="usb_status_empty">USB folder not found: put files in the TVAutoPlayer folder at the USB root.</string>
     <string name="no_media_in_usb">No media found in USB mode. Put images or videos into the TVAutoPlayer folder at the USB root; playback starts automatically after the drive is reinserted.</string>
-    <string name="audio_track_default">Audio: auto (system language)</string>
+    <string name="audio_track_default">Audio: auto</string>
     <string name="audio_track_button_value">Audio track: %1$d</string>
     <string name="audio_track_description">Applied automatically on each new video. Auto prefers the system language track; or pick a specific track number.</string>
     <string name="audio_track_dialog_title">Select audio track</string>
-    <string name="audio_track_option_default">Auto (prefer system language track)</string>
+    <string name="audio_track_option_default">Auto</string>
     <string name="audio_track_option_n">Track %1$d</string>
     <string name="audio_track_switched">Switched to track %1$d/%2$d%3$s</string>
     <string name="audio_track_out_of_range">This video only has %1$d audio track(s)</string>
     <string name="audio_track_unsupported">Track %1$d uses a codec this TV cannot decode%2$s</string>
     <string name="audio_track_not_ready">Audio tracks are not ready yet, try again shortly</string>
     <string name="audio_track_player_not_ready">Player is not ready</string>
-    <string name="audio_track_reset_done">Audio track reset to automatic (prefer Chinese)</string>
+    <string name="audio_track_reset_done">Audio track reset to automatic</string>
     <string name="audio_track_none_decodable">No audio track in this video can be decoded by this TV%1$s. Convert it to AAC and upload again.</string>
 </resources>

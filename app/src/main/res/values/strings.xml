@@ -61,17 +61,17 @@
     <string name="usb_status_value">U 盘目录：%1$d 个媒体文件</string>
     <string name="usb_status_empty">未找到 U 盘目录：请把文件放到 U 盘根目录的 TVAutoPlayer 文件夹。</string>
     <string name="no_media_in_usb">U 盘模式没有找到媒体文件。请把图片或视频放入 U 盘根目录的 TVAutoPlayer 文件夹，重新插入 U 盘后会自动播放。</string>
-    <string name="audio_track_default">音轨：自动（中文优先）</string>
+    <string name="audio_track_default">音轨：自动</string>
     <string name="audio_track_button_value">音轨：%1$d</string>
-    <string name="audio_track_description">每次播放新视频自动应用所选音轨。选自动时优先中文音轨，也可以指定音轨序号。</string>
+    <string name="audio_track_description">每次播放新视频自动应用所选音轨。选自动时优先系统语言音轨，也可以指定音轨序号。</string>
     <string name="audio_track_dialog_title">选择播放音轨</string>
-    <string name="audio_track_option_default">自动（优先中文音轨）</string>
+    <string name="audio_track_option_default">自动</string>
     <string name="audio_track_option_n">音轨 %1$d</string>
     <string name="audio_track_switched">已切换到音轨 %1$d/%2$d%3$s</string>
     <string name="audio_track_out_of_range">当前视频只有 %1$d 条音轨</string>
     <string name="audio_track_unsupported">音轨 %1$d 的编码电视无法解码%2$s</string>
     <string name="audio_track_not_ready">音轨信息尚未就绪，请稍后再试</string>
     <string name="audio_track_player_not_ready">播放器未就绪</string>
-    <string name="audio_track_reset_done">音轨已恢复自动选择（优先中文）</string>
+    <string name="audio_track_reset_done">音轨已恢复自动选择</string>
     <string name="audio_track_none_decodable">该视频没有电视可解码的音轨%1$s，请转成 AAC 后上传</string>
 </resources>
