@@ -29,9 +29,12 @@ import androidx.media3.common.Player;
 import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
+
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -821,7 +824,14 @@ public final class MainActivity extends ComponentActivity {
      * switches only swap playlists on this warm instance, keeping transitions smooth.
      */
     private void createPlayer() {
-        player = new ExoPlayer.Builder(this)
+        // Most TV boxes ship no AC-3 / E-AC-3 / DTS decoder, so the FFmpeg extension
+        // covers those formats. EXTENSION_RENDERER_MODE_ON only falls back when the
+        // platform cannot decode the format; AAC and friends still use hardware.
+        NextRenderersFactory renderersFactory = new NextRenderersFactory(this);
+        renderersFactory.setExtensionRendererMode(
+                DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
+        renderersFactory.setEnableDecoderFallback(true);
+        player = new ExoPlayer.Builder(this, renderersFactory)
                 .setAudioAttributes(
                         new AudioAttributes.Builder()
                                 .setUsage(C.USAGE_MEDIA)

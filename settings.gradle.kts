@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // nextlib 的 FFmpeg 音频扩展只发布在 JitPack 上。
+        maven("https://jitpack.io")
     }
 }
 
