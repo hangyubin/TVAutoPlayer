@@ -44,6 +44,20 @@
             android:text="@string/standby_waiting"
             android:textColor="#D5E0EC"
             android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/standby_clock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="@dimen/screen_horizontal_margin"
+            android:layout_marginBottom="10dp"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="4"
+            android:textColor="#E4EBF5"
+            android:textSize="15sp" />
     </FrameLayout>
 
     <LinearLayout

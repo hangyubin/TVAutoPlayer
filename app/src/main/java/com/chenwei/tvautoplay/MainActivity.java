@@ -36,8 +36,10 @@ import androidx.media3.ui.PlayerView;
 
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -57,6 +59,9 @@ public final class MainActivity extends ComponentActivity {
     private static final long WATCH_SETTLE_MS = 1_500L;
     /** An unattended TV must recover on its own after a transient playback/network failure. */
     private static final long ERROR_RETRY_INTERVAL_MS = 60_000L;
+    /** Clock on the standby screen; only ever touched from the main thread. */
+    private static final SimpleDateFormat STANDBY_CLOCK_FORMAT =
+            new SimpleDateFormat("yyyy/M/d HH:mm:ss", Locale.getDefault());
 
     private final Handler scheduleHandler = new Handler(Looper.getMainLooper());
     private final Runnable scheduleCheck = this::checkForScheduleTransition;
@@ -81,6 +86,7 @@ public final class MainActivity extends ComponentActivity {
     private View errorPanel;
     private View standbyPanel;
     private TextView standbyStatus;
+    private TextView standbyClock;
     private TextView emptyMessage;
     private TextView errorMessage;
     private PlaybackConfigStore configStore;
@@ -183,6 +189,7 @@ public final class MainActivity extends ComponentActivity {
         errorMessage = findViewById(R.id.error_message);
         standbyPanel = findViewById(R.id.standby_panel);
         standbyStatus = findViewById(R.id.standby_status);
+        standbyClock = findViewById(R.id.standby_clock);
 
         Button openSettings = findViewById(R.id.open_settings_button);
         Button retry = findViewById(R.id.retry_button);
@@ -736,11 +743,24 @@ public final class MainActivity extends ComponentActivity {
     private void showStandby(int statusTextRes) {
         standbyStatus.setText(statusTextRes);
         standbyPanel.setVisibility(View.VISIBLE);
+        // Re-asserting the standby screen must not queue a second clock loop.
+        mainHandler.removeCallbacks(standbyClockTick);
+        standbyClockTick.run();
     }
 
     private void hideStandby() {
+        mainHandler.removeCallbacks(standbyClockTick);
         standbyPanel.setVisibility(View.GONE);
     }
+
+    /** Keeps the standby clock current; only runs while the standby layer is visible. */
+    private final Runnable standbyClockTick = new Runnable() {
+        @Override
+        public void run() {
+            standbyClock.setText(STANDBY_CLOCK_FORMAT.format(new Date()));
+            mainHandler.postDelayed(this, 1000L);
+        }
+    };
 
     private void showSelectionRequired(PlaybackDecision decision) {
         playerView.setVisibility(View.GONE);
@@ -928,7 +948,7 @@ public final class MainActivity extends ComponentActivity {
         playerView.setPlayer(player);
         // Keep the branded screen up until the first frame is actually on screen, so the
         // startup never shows a black surface.
-        showStandby(R.string.standby_loading);
+        showStandby(R.string.standby_waiting);
     }
 
     /**
