@@ -61,6 +61,8 @@
     <string name="usb_status_value">USB folder: %1$d media files</string>
     <string name="usb_status_empty">USB folder not found: put files in the TVAutoPlayer folder at the USB root.</string>
     <string name="no_media_in_usb">No media found in USB mode. Put images or videos into the TVAutoPlayer folder at the USB root; playback starts automatically after the drive is reinserted.</string>
+    <string name="standby_waiting">Standby · Waiting for schedule</string>
+    <string name="standby_loading">Loading…</string>
     <string name="audio_track_default">Audio: auto</string>
     <string name="audio_track_button_value">Audio track: %1$d</string>
     <string name="audio_track_description">Applied automatically on each new video. Auto prefers the system language track; or pick a specific track number.</string>

@@ -61,6 +61,8 @@
     <string name="usb_status_value">U 盘目录：%1$d 个媒体文件</string>
     <string name="usb_status_empty">未找到 U 盘目录：请把文件放到 U 盘根目录的 TVAutoPlayer 文件夹。</string>
     <string name="no_media_in_usb">U 盘模式没有找到媒体文件。请把图片或视频放入 U 盘根目录的 TVAutoPlayer 文件夹，重新插入 U 盘后会自动播放。</string>
+    <string name="standby_waiting">待机中 · 等待节目单</string>
+    <string name="standby_loading">正在加载…</string>
     <string name="audio_track_default">音轨：自动</string>
     <string name="audio_track_button_value">音轨：%1$d</string>
     <string name="audio_track_description">每次播放新视频自动应用所选音轨。选自动时优先系统语言音轨，也可以指定音轨序号。</string>

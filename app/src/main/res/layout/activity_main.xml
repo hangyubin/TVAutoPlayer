@@ -12,6 +12,40 @@
         app:show_timeout="4000"
         app:use_controller="true" />
 
+    <!-- Standby layer: covers the black player surface while nothing is playing or before the
+         first frame arrives. Declared after PlayerView so it draws on top, and before the
+         message panels so those still float above it. -->
+    <FrameLayout
+        android:id="@+id/standby_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/background"
+        android:clickable="false"
+        android:focusable="false">
+
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"
+            android:src="@drawable/standby_background" />
+
+        <TextView
+            android:id="@+id/standby_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:layout_marginBottom="10dp"
+            android:gravity="center"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="4"
+            android:text="@string/standby_waiting"
+            android:textColor="#D5E0EC"
+            android:textSize="15sp" />
+    </FrameLayout>
+
     <LinearLayout
         android:id="@+id/empty_panel"
         android:layout_width="match_parent"

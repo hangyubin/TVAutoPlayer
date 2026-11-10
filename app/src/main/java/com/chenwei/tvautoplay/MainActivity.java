@@ -79,6 +79,8 @@ public final class MainActivity extends ComponentActivity {
     private PlayerView playerView;
     private View emptyPanel;
     private View errorPanel;
+    private View standbyPanel;
+    private TextView standbyStatus;
     private TextView emptyMessage;
     private TextView errorMessage;
     private PlaybackConfigStore configStore;
@@ -179,6 +181,8 @@ public final class MainActivity extends ComponentActivity {
         errorPanel = findViewById(R.id.error_panel);
         emptyMessage = findViewById(R.id.empty_message);
         errorMessage = findViewById(R.id.error_message);
+        standbyPanel = findViewById(R.id.standby_panel);
+        standbyStatus = findViewById(R.id.standby_status);
 
         Button openSettings = findViewById(R.id.open_settings_button);
         Button retry = findViewById(R.id.retry_button);
@@ -724,6 +728,20 @@ public final class MainActivity extends ComponentActivity {
         errorPanel.setVisibility(View.GONE);
     }
 
+    /**
+     * Shows the branded standby screen. The player surface is pure black until the first frame
+     * arrives, and stays black whenever there is nothing to play, so this layer sits on top of
+     * it and states what the screen is waiting for.
+     */
+    private void showStandby(int statusTextRes) {
+        standbyStatus.setText(statusTextRes);
+        standbyPanel.setVisibility(View.VISIBLE);
+    }
+
+    private void hideStandby() {
+        standbyPanel.setVisibility(View.GONE);
+    }
+
     private void showSelectionRequired(PlaybackDecision decision) {
         playerView.setVisibility(View.GONE);
         errorPanel.setVisibility(View.GONE);
@@ -733,6 +751,7 @@ public final class MainActivity extends ComponentActivity {
         } else {
             emptyMessage.setText(R.string.no_media_in_usb);
         }
+        showStandby(R.string.standby_waiting);
     }
 
     private void showMediaPermissionRequired() {
@@ -741,6 +760,7 @@ public final class MainActivity extends ComponentActivity {
         errorPanel.setVisibility(View.GONE);
         emptyPanel.setVisibility(View.VISIBLE);
         emptyMessage.setText(R.string.media_permission_required);
+        showStandby(R.string.standby_waiting);
     }
 
     private void showWaitingForSchedule() {
@@ -748,6 +768,7 @@ public final class MainActivity extends ComponentActivity {
         errorPanel.setVisibility(View.GONE);
         emptyPanel.setVisibility(View.VISIBLE);
         emptyMessage.setText(R.string.no_active_schedule);
+        showStandby(R.string.standby_waiting);
     }
 
     private void showPlaybackError(PlaybackException error) {
@@ -886,6 +907,14 @@ public final class MainActivity extends ComponentActivity {
             }
 
             @Override
+            public void onRenderedFirstFrame() {
+                // The frame is on screen now, so the standby layer is no longer covering
+                // anything. Hiding here (instead of at STATE_READY) avoids a black flash
+                // between "buffered" and "visible".
+                hideStandby();
+            }
+
+            @Override
             public void onTracksChanged(Tracks tracks) {
                 // Tracks are only published after the renderers have probed the media,
                 // which can happen slightly after STATE_READY. This is the reliable hook.
@@ -897,6 +926,9 @@ public final class MainActivity extends ComponentActivity {
         playerView.setFocusable(true);
         playerView.setFocusableInTouchMode(true);
         playerView.setPlayer(player);
+        // Keep the branded screen up until the first frame is actually on screen, so the
+        // startup never shows a black surface.
+        showStandby(R.string.standby_loading);
     }
 
     /**
@@ -921,6 +953,7 @@ public final class MainActivity extends ComponentActivity {
         }
         activePlaylistSize = 0;
         consecutivePlaybackFailures = 0;
+        showStandby(R.string.standby_waiting);
     }
 
     // ---------- Audio track switching (remote 1-9 pick, 0 for default) ----------
