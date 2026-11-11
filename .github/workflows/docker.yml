@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - develop
     paths:
       - "server/**"
       - "docker-compose.yml"
@@ -50,11 +49,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/tvautoplayer-server
-          # main 出 latest 与版本号；develop 只出 dev 标签，避免覆盖生产镜像
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/develop' }}
+            type=raw,value=latest
+            type=raw,value=${{ steps.version.outputs.version }}
             type=sha
 
       # amd64 给 x86 服务器，arm64 给树莓派/ARM NAS；同一份 Dockerfile 多架构构建

@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - develop
   workflow_dispatch:
 
 permissions:
@@ -45,7 +44,6 @@ jobs:
       # 这样发版时不用再手写一遍，改了 changelog 就等于写好了 release notes。
       - name: Collect version and release notes
         id: release
-        if: github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
           $gradleFile = Join-Path $PWD 'app\build.gradle.kts'
@@ -87,9 +85,7 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "apk=$apkName" >> $env:GITHUB_OUTPUT
 
-      # 只有 main 才发正式 Release；develop 只产出测试 APK（见上方 artifact）
       - name: Publish GitHub Release
-        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.release.outputs.version }}
