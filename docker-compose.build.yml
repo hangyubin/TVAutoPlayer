@@ -1,0 +1,7 @@
+# 本地构建覆盖文件：不拉 GHCR 镜像，直接用当前源码构建
+# 用法：docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  server:
+    build:
+      context: ./server
+    image: tvautoplayer-server:latest

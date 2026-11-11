@@ -1,8 +1,7 @@
 services:
   server:
-    build:
-      context: ./server
-    image: tvautoplayer-server:latest
+    # 默认拉取 CI 发布到 GHCR 的镜像；本地构建见 docker-compose.build.yml
+    image: ghcr.io/hangyubin/tvautoplayer-server:latest
     container_name: tvautoplayer-server
     restart: unless-stopped
     ports:

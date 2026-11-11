@@ -122,15 +122,33 @@ loginctl enable-linger "$USER"
 
 ### Docker
 
-镜像内置 Node 24 与 ffmpeg，无需在宿主机安装任何环境。
+镜像内置 Node 24 与 ffmpeg，无需在宿主机安装任何环境。CI 已把镜像发布到 GHCR，默认直接拉取，不必本地构建。
 
 ```bash
 git clone https://github.com/hangyubin/TVAutoPlayer.git
 cd TVAutoPlayer
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 启动后浏览器访问 `http://服务器IP:8300/`，默认账户 `admin / admin`，登录后立即修改密码。
+
+镜像地址：`ghcr.io/hangyubin/tvautoplayer-server`
+
+- `latest`：跟随 main 分支最新提交
+- `1.10.0` 等版本号：与 APK 同版本，取自 `app/build.gradle.kts`
+- `sha-xxxxxxx`：按提交固定，便于回滚
+- 架构：`linux/amd64`、`linux/arm64`（树莓派、ARM NAS 可直接用）
+
+拉取失败（`unauthorized`）：GHCR 的包默认可能是私有的。到 GitHub 仓库的 **Packages → tvautoplayer-server → Package settings → Change visibility → Public** 改成公开后即可匿名拉取；或者先 `echo <你的PAT> | docker login ghcr.io -u <用户名> --password-stdin`（PAT 需 `read:packages` 权限）。
+
+本地构建（改过源码或 CI 未发布时）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+升级：`git pull` 后 `docker compose pull && docker compose up -d`，数据目录不受影响。
 
 数据映射，两个卷各管一件事：
 
