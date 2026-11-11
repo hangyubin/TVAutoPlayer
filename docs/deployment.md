@@ -120,6 +120,41 @@ loginctl enable-linger "$USER"
 4. 需要旧封装 MKV 自动重封装时，双击 `安装ffmpeg.bat`；不安装只影响旧 MKV。
 5. 关闭命令行窗口即停止服务。需要开机自启时，把 `启动服务.bat` 的快捷方式放入「启动」文件夹（`shell:startup`）。
 
+### Docker
+
+镜像内置 Node 24 与 ffmpeg，无需在宿主机安装任何环境。
+
+```bash
+git clone https://github.com/hangyubin/TVAutoPlayer.git
+cd TVAutoPlayer
+docker compose up -d --build
+```
+
+启动后浏览器访问 `http://服务器IP:8300/`，默认账户 `admin / admin`，登录后立即修改密码。
+
+数据持久化：
+
+| 宿主机 | 容器 | 内容 |
+|---|---|---|
+| `./docker-data` | `/data` | `data.db` 数据库、`.secret` 加密密钥、`media/` 上传的媒体 |
+
+`docker compose down` 删容器不丢数据；`git pull` 后重新 `up -d --build` 即完成升级，数据目录不受影响。
+
+常见调整，改 `docker-compose.yml` 后 `docker compose up -d`：
+
+- **端口占用**：把 `8300:8300` 左边改成别的端口，例如 `9000:8300`，电视端填 `服务器IP:9000`。
+- **上传上限**：调整 `MAX_UPLOAD_GB`（默认 8）。
+- **时区**：`TZ` 默认 `Asia/Shanghai`，影响时段计划的开关时刻，非中国时区请改。
+- **挂载已有媒体文件夹**：追加 `- /path/to/videos:/media:ro`，再在后台「媒体库」添加路径 `/media` 扫描，不必重复上传。
+- **配置项**：`config.env` 不打进镜像，用 compose 的 `environment` 配置即可，环境变量优先。
+
+迁移已有数据：把旧目录的 `data.db`、`data`、`media` 复制到 `./docker-data/` 再启动。注意数据库内保存的是媒体库**绝对路径**，从 Windows 迁到容器后需在后台把媒体库路径改成 `/data/media` 等容器内路径并重新扫描。
+
+限制：
+
+- 容器内路径与宿主机不同，后台「扫描服务器文件夹」只能扫容器内可见的目录，宿主机目录需先挂载进去。
+- 镜像以 root 运行，避免宿主机挂载目录的属主差异导致上传失败；仅在可信局域网内使用。
+
 ### 管理后台使用
 
 | 页签 | 用途 |

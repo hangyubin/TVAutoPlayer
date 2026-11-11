@@ -1,0 +1,19 @@
+services:
+  server:
+    build:
+      context: ./server
+    image: tvautoplayer-server:latest
+    container_name: tvautoplayer-server
+    restart: unless-stopped
+    ports:
+      # 电视端与管理后台都通过这个端口访问，务必保持局域网可达
+      - "8300:8300"
+    environment:
+      TZ: Asia/Shanghai
+      PORT: "8300"
+      # 数据库、密钥、上传的媒体统一存放目录（对应下面的卷）
+      TV_DATA_DIR: /data
+      # 网页上传单文件上限（GB）
+      MAX_UPLOAD_GB: "8"
+    volumes:
+      - ./docker-data:/data

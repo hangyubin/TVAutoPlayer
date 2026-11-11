@@ -2,7 +2,9 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 
-const db = new DatabaseSync(path.join(__dirname, 'data.db'));
+// 数据目录可由环境变量改写（容器部署挂载卷），默认仍与服务端代码同目录
+const dataRoot = process.env.TV_DATA_DIR ? path.resolve(process.env.TV_DATA_DIR) : __dirname;
+const db = new DatabaseSync(path.join(dataRoot, 'data.db'));
 
 db.exec(`
 PRAGMA journal_mode = WAL;

@@ -110,6 +110,7 @@ adb install -r .\TVAutoPlayer-v1.9.0-debug.apk
 
 - [Linux 部署与后台使用教程](docs/deployment.md#服务端部署)
 - Windows 用户可直接下载 Release 中的 `TVAutoPlayer-Server-Windows.zip`，解压后双击 `启动服务.bat` 运行，内置 Node.js，无需安装任何环境。
+- Docker：在仓库根目录执行 `docker compose up -d --build`，打开 `http://服务器IP:8300/` 即可。数据（数据库、密钥、上传的媒体）保存在 `./docker-data`，删容器不丢数据；升级时 `git pull` 后重新 `up -d --build`。完整说明见 [Docker 部署](docs/deployment.md#docker-部署)。
 
 ## 推荐媒体格式
 
