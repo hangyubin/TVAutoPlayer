@@ -9,14 +9,15 @@ RUN apk add --no-cache ffmpeg tzdata
 ENV NODE_ENV=production \
     PORT=8300 \
     TV_DATA_DIR=/data \
+    TV_MEDIA_DIR=/media \
     TZ=Asia/Shanghai
 
 WORKDIR /app/server
 COPY . .
 
-# 运行期写入的数据库、密钥、上传媒体都落在 /data，作为卷挂载
-RUN mkdir -p /data/media /data/data
-VOLUME ["/data"]
+# 数据库/密钥与媒体分开两个卷，便于单独备份与直接拷入视频
+RUN mkdir -p /data/data /media
+VOLUME ["/data", "/media"]
 
 EXPOSE 8300
 CMD ["node", "server.js"]

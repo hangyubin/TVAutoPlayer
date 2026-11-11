@@ -1,9 +1,11 @@
 // SQLite 数据层：媒体库、节目单、时段计划、管理员账户
 const { DatabaseSync } = require('node:sqlite');
+const fs = require('fs');
 const path = require('path');
 
 // 数据目录可由环境变量改写（容器部署挂载卷），默认仍与服务端代码同目录
 const dataRoot = process.env.TV_DATA_DIR ? path.resolve(process.env.TV_DATA_DIR) : __dirname;
+fs.mkdirSync(dataRoot, { recursive: true }); // 首次挂载的空卷需要先把目录建出来
 const db = new DatabaseSync(path.join(dataRoot, 'data.db'));
 
 db.exec(`

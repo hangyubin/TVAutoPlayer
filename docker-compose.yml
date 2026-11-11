@@ -11,9 +11,14 @@ services:
     environment:
       TZ: Asia/Shanghai
       PORT: "8300"
-      # 数据库、密钥、上传的媒体统一存放目录（对应下面的卷）
+      # 数据库与密钥
       TV_DATA_DIR: /data
+      # 上传的媒体与主媒体库，单独一个卷，宿主机可直接读写
+      TV_MEDIA_DIR: /media
       # 网页上传单文件上限（GB）
       MAX_UPLOAD_GB: "8"
     volumes:
-      - ./docker-data:/data
+      # 数据库 + 密钥：只有几 MB，备份时整个目录拷走即可
+      - ./data:/data
+      # 媒体文件：可以直接往宿主机 ./media 里拷视频，后台点扫描即可入库
+      - ./media:/media

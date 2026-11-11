@@ -38,7 +38,10 @@ const PORT = process.env.PORT || 8300;
 // 运行期会写入的东西（数据库、密钥、上传的媒体）都放在 dataRoot 下，
 // 容器部署时把它指向挂载卷即可，代码目录保持只读也能正常工作。
 const dataRoot = process.env.TV_DATA_DIR ? path.resolve(process.env.TV_DATA_DIR) : __dirname;
-const MEDIA_DIR = path.join(dataRoot, 'media');
+// 媒体存储可与数据库分开挂载：把已有视频目录直接挂进容器，省掉重复上传
+const MEDIA_DIR = process.env.TV_MEDIA_DIR
+  ? path.resolve(process.env.TV_MEDIA_DIR)
+  : path.join(dataRoot, 'media');
 fs.mkdirSync(MEDIA_DIR, { recursive: true }); // 重封装临时文件与历史文件仍然读这里
 // 主媒体库的实际存储目录可以在后台改到任意文件夹；这里缓存解析结果，
 // 改动后调用 resetMainDir() 失效，后续上传、扫描、/media 都落到新目录。

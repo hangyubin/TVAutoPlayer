@@ -132,28 +132,63 @@ docker compose up -d --build
 
 启动后浏览器访问 `http://服务器IP:8300/`，默认账户 `admin / admin`，登录后立即修改密码。
 
-数据持久化：
+数据映射，两个卷各管一件事：
 
-| 宿主机 | 容器 | 内容 |
-|---|---|---|
-| `./docker-data` | `/data` | `data.db` 数据库、`.secret` 加密密钥、`media/` 上传的媒体 |
+| 宿主机 | 容器 | 环境变量 | 内容 |
+|---|---|---|---|
+| `./data` | `/data` | `TV_DATA_DIR` | `data.db` 数据库、`data/.secret` 凭证密钥，只有几 MB |
+| `./media` | `/media` | `TV_MEDIA_DIR` | 上传的媒体、主媒体库的实际文件，体积大 |
 
-`docker compose down` 删容器不丢数据；`git pull` 后重新 `up -d --build` 即完成升级，数据目录不受影响。
+这样分开的好处：
+
+- **备份数据库**：只拷 `./data` 目录，不用碰几百 GB 的媒体
+- **直接加片**：把视频拷进宿主机 `./media`（或子文件夹），后台「媒体库」点扫描即可入库，不必走网页上传
+- **换盘或扩容**：把 `./media` 换成别的磁盘路径，改 compose 一行即可，数据库不用动
+- **单独清理**：删掉 `./media` 只影响文件，账号、节目单、时段计划都还在
+
+`docker compose down` 删容器不丢数据；`git pull` 后重新 `up -d --build` 即完成升级，两个目录都不受影响。
+
+备份与恢复：
+
+```bash
+# 备份（建议先停容器，避免 WAL 里有未落盘的事务）
+docker compose stop
+tar czf tvautoplayer-backup-$(date +%F).tar.gz data/
+docker compose start
+
+# 恢复：解压覆盖 data/ 后启动即可
+```
 
 常见调整，改 `docker-compose.yml` 后 `docker compose up -d`：
 
 - **端口占用**：把 `8300:8300` 左边改成别的端口，例如 `9000:8300`，电视端填 `服务器IP:9000`。
 - **上传上限**：调整 `MAX_UPLOAD_GB`（默认 8）。
 - **时区**：`TZ` 默认 `Asia/Shanghai`，影响时段计划的开关时刻，非中国时区请改。
-- **挂载已有媒体文件夹**：追加 `- /path/to/videos:/media:ro`，再在后台「媒体库」添加路径 `/media` 扫描，不必重复上传。
+- **使用已有视频目录**：把 `./media:/media` 换成 `/mnt/nas/videos:/media`，后台扫描 `/media` 即可，不用拷贝文件。
+- **挂载额外的只读目录**：追加 `- /mnt/movies:/movies:ro`，再在后台「媒体库」添加路径 `/movies`。
 - **配置项**：`config.env` 不打进镜像，用 compose 的 `environment` 配置即可，环境变量优先。
 
-迁移已有数据：把旧目录的 `data.db`、`data`、`media` 复制到 `./docker-data/` 再启动。注意数据库内保存的是媒体库**绝对路径**，从 Windows 迁到容器后需在后台把媒体库路径改成 `/data/media` 等容器内路径并重新扫描。
+从旧的单卷方式（`./docker-data:/data`）迁移：
+
+```bash
+docker compose down
+mkdir -p data media
+mv docker-data/data.db docker-data/data.db-* data/ 2>/dev/null
+mv docker-data/data/.secret data/data/ 2>/dev/null
+mv docker-data/media/* media/ 2>/dev/null
+rm -rf docker-data
+docker compose up -d
+```
+
+迁移后数据库里记录的媒体库绝对路径还是 `/data/media`，需要在后台「媒体库」把它改成 `/media` 并重新扫描一次。
+
+从 Windows 直接迁移：同样把 `data.db`、`data`、`media` 分别放进 `./data` 和 `./media`，然后按上面一步改媒体库路径。
 
 限制：
 
 - 容器内路径与宿主机不同，后台「扫描服务器文件夹」只能扫容器内可见的目录，宿主机目录需先挂载进去。
-- 镜像以 root 运行，避免宿主机挂载目录的属主差异导致上传失败；仅在可信局域网内使用。
+- 镜像以 root 运行，避免宿主机挂载目录的属主差异导致上传失败。因此容器上传的文件在宿主机上是 root 属主；需要普通用户也能删除时执行 `sudo chown -R $USER:$USER media`。
+- 仅在可信局域网内使用。
 
 ### 管理后台使用
 

@@ -17,7 +17,8 @@ server/data.db
 server/data.db-*
 server/media/
 server/public/uploads/
-# Docker 部署的运行期数据（数据库、密钥、上传媒体）
-docker-data/
+# Docker 部署的运行期数据：数据库/密钥与媒体列表分两个卷
+/data/
+/media/
 # Release binaries are distributed as GitHub Release assets
 dist/*.zip
