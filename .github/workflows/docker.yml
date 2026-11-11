@@ -63,5 +63,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 默认会额外推送 provenance/SBOM 证明清单，platform 为 unknown/unknown。
+          # 部分客户端与代理镜像会卡在这两个条目上报 no matching manifest，关掉后
+          # 索引里只剩 amd64 与 arm64，兼容性最好。
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
