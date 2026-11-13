@@ -3,6 +3,7 @@ package com.chenwei.tvautoplay;
 import android.net.Uri;
 
 import androidx.annotation.OptIn;
+import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
@@ -62,8 +63,7 @@ public final class PlaybackMediaItemFactory {
         }
         return new MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUri))
                 .setMimeType(mimeType)
-                .setSelectionFlags(MediaItem.SubtitleConfiguration.SELECTION_FLAG_DEFAULT
-                        | MediaItem.SubtitleConfiguration.SELECTION_FLAG_AUTOSELECT)
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT | C.SELECTION_FLAG_AUTOSELECT)
                 .build();
     }
 }

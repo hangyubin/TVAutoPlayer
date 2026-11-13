@@ -1195,10 +1195,10 @@ public final class MainActivity extends ComponentActivity {
         // If so, re-enable them (but keep any other disabled types intact).
         TrackSelectionParameters params =
                 player.getTrackSelectionParameters();
-        if (params.getDisabledTrackTypes().contains(C.TRACK_TYPE_TEXT)) {
+        if (params.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)) {
             player.setTrackSelectionParameters(
                     params.buildUpon()
-                            .clearDisabledTrackTypes()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                             .setPreferredTextLanguage("zh")
                             .build());
             return;
