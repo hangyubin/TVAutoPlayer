@@ -27,6 +27,7 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.TrackSelectionParameters;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
@@ -901,9 +902,14 @@ public final class MainActivity extends ComponentActivity {
         // Container default flags are unreliable after remuxing, so pick the default
         // audio track by language: the TV's system language first, then the container
         // default flag, then the first track. A manual track pick always wins.
+        // Subtitles: prefer Chinese (zh) if present, otherwise fall back to the system
+        // language's text tracks. Never disable text tracks — the user may attach an
+        // external .srt that should be shown automatically.
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
                         .setPreferredAudioLanguage(Locale.getDefault().getLanguage())
+                        .setPreferredTextLanguage("zh")
+                        .setPreferredTextRoleFlags(C.ROLE_FLAG_MAIN)
                         .build());
         player.addListener(new Player.Listener() {
             @Override
@@ -941,6 +947,7 @@ public final class MainActivity extends ComponentActivity {
                 rememberAudioTrackCount();
                 applySavedAudioTrackOverride();
                 warnIfAudioUndecodable();
+                ensureSubtitleSelected(tracks);
             }
         });
         playerView.setFocusable(true);
@@ -1145,6 +1152,127 @@ public final class MainActivity extends ComponentActivity {
         }
         audioUndecodableNotified = true;
         toast(getString(R.string.audio_track_none_decodable, codec));
+    }
+
+    /**
+     * When the selected track is disabled (e.g. the video's embedded subtitle track was
+     * explicitly disabled by the container, or no track type preference matched), Media3
+     * can end up with no text track selected at all. Make sure at least one subtitle track
+     * stays enabled whenever the media item exposes them — embedded or external.
+     *
+     * <p>Media3's default TrackSelectionParameters has text tracks enabled, so this guard
+     * mostly kicks in when a previous manual subtitle disable (or an aggressive
+     * disabledTrackTypes set) persists across playlist items.</p>
+     */
+    private void ensureSubtitleSelected(Tracks tracks) {
+        if (player == null) return;
+        // First: do any text track groups exist at all? Skip images and live streams
+        // with no embedded captions.
+        boolean hasTextGroup = false;
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() == C.TRACK_TYPE_TEXT && group.length > 0) {
+                hasTextGroup = true;
+                break;
+            }
+        }
+        if (!hasTextGroup) return;
+
+        // Second: is ANY text track currently selected?
+        boolean anyTextSelected = false;
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_TEXT) continue;
+            for (int i = 0; i < group.length; i++) {
+                if (group.isTrackSelected(i)) {
+                    anyTextSelected = true;
+                    break;
+                }
+            }
+            if (anyTextSelected) break;
+        }
+        if (anyTextSelected) return;
+
+        // Third: check if text tracks are globally disabled in the current parameters.
+        // If so, re-enable them (but keep any other disabled types intact).
+        TrackSelectionParameters params =
+                player.getTrackSelectionParameters();
+        if (params.getDisabledTrackTypes().contains(C.TRACK_TYPE_TEXT)) {
+            player.setTrackSelectionParameters(
+                    params.buildUpon()
+                            .clearDisabledTrackTypes()
+                            .setPreferredTextLanguage("zh")
+                            .build());
+            return;
+        }
+
+        // Fourth: parameters allow text but nothing got selected — pick the first Chinese
+        // track, or fall back to the very first one available.
+        TrackSelectionOverride chinese = pickChineseTextTrack(tracks);
+        if (chinese != null) {
+            player.setTrackSelectionParameters(
+                    params.buildUpon()
+                            .setOverrideForType(chinese)
+                            .build());
+        } else {
+            TrackSelectionOverride first = pickFirstTextTrack(tracks);
+            if (first != null) {
+                player.setTrackSelectionParameters(
+                        params.buildUpon()
+                                .setOverrideForType(first)
+                                .build());
+            }
+        }
+    }
+
+    /** Find a Chinese text track (language "zh" or any Chinese character in label). */
+    private static TrackSelectionOverride pickChineseTextTrack(Tracks tracks) {
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_TEXT) continue;
+            for (int i = 0; i < group.length; i++) {
+                Format format = group.getTrackFormat(i);
+                String lang = format.language != null ? format.language.toLowerCase(Locale.ROOT) : "";
+                String label = format.label != null ? format.label.toLowerCase(Locale.ROOT) : "";
+                // "zh", "zh-CN", "zh-TW" etc → direct language match
+                if (lang.startsWith("zh")) {
+                    return new TrackSelectionOverride(group.getMediaTrackGroup(), i);
+                }
+                // Common Chinese track labels: CJK characters anywhere in the label
+                if (containsCjk(format.label)) {
+                    return new TrackSelectionOverride(group.getMediaTrackGroup(), i);
+                }
+                // "chs"/"cht"/"sc"/"tc" are standard Simplified/Traditional codes
+                if (label.contains("chs") || label.contains("cht")
+                        || label.equals("sc") || label.equals("tc")
+                        || label.contains("chinese")) {
+                    return new TrackSelectionOverride(group.getMediaTrackGroup(), i);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** True when the string contains any CJK ideograph (U+4E00..U+9FFF range). */
+    private static boolean containsCjk(String text) {
+        if (text == null) return false;
+        for (int i = 0; i < text.length(); i++) {
+            int cp = text.codePointAt(i);
+            if (cp >= 0x4E00 && cp <= 0x9FFF) return true;
+            // Also catch CJK Extension A + punctuation used in labels
+            if (cp >= 0x3400 && cp <= 0x4DBF) return true;
+        }
+        return false;
+    }
+
+    /** Pick the very first available text track as a last resort. */
+    private static TrackSelectionOverride pickFirstTextTrack(Tracks tracks) {
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_TEXT) continue;
+            for (int i = 0; i < group.length; i++) {
+                if (group.isTrackSupported(i)) {
+                    return new TrackSelectionOverride(group.getMediaTrackGroup(), i);
+                }
+            }
+        }
+        return null;
     }
 
     private void toast(String message) {

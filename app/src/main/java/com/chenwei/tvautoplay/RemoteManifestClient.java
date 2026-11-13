@@ -158,7 +158,11 @@ public final class RemoteManifestClient {
         Integer durationSec = item.has("durationSec") && !item.isNull("durationSec")
                 ? item.getInt("durationSec")
                 : null;
-        return new ManifestItem(absolute, sha, kind, durationSec, name);
+        String subtitleRel = item.has("subtitleUrl") && !item.isNull("subtitleUrl")
+                ? item.optString("subtitleUrl", "")
+                : "";
+        String subtitleAbs = subtitleRel.isEmpty() ? null : buildAbsoluteMediaUrl(baseUrl, subtitleRel);
+        return new ManifestItem(absolute, sha, kind, durationSec, name, subtitleAbs);
     }
 
     private static String buildAbsoluteMediaUrl(String baseUrl, String relative) {
@@ -227,17 +231,25 @@ public final class RemoteManifestClient {
         public final Integer durationSec;
         /** Human-readable name; currently only set for LIVE entries. May be empty. */
         public final String name;
+        /** Absolute http(s) URL to an external subtitle file (SRT/VTT/ASS…), or null. */
+        public final String subtitleUrl;
 
         ManifestItem(String url, String sha256, MediaKind kind, Integer durationSec) {
-            this(url, sha256, kind, durationSec, "");
+            this(url, sha256, kind, durationSec, "", null);
         }
 
         ManifestItem(String url, String sha256, MediaKind kind, Integer durationSec, String name) {
+            this(url, sha256, kind, durationSec, name, null);
+        }
+
+        ManifestItem(String url, String sha256, MediaKind kind, Integer durationSec,
+                     String name, String subtitleUrl) {
             this.url = url;
             this.sha256 = sha256;
             this.kind = kind;
             this.durationSec = durationSec;
             this.name = name == null ? "" : name;
+            this.subtitleUrl = subtitleUrl;
         }
     }
 

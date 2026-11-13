@@ -151,6 +151,16 @@ function requireAuth(req, res) {
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'heic', 'heif']);
 const VIDEO_EXT = new Set(['mp4', 'mkv', 'webm', 'ts', 'm4v', 'mov']);
+// 字幕文件：Media3 可解析的文本字幕格式
+const SUBTITLE_EXT = new Set(['srt', 'vtt', 'ass', 'ssa', 'smi', 'ttml', 'txt']);
+const SUBTITLE_MIME = {
+  '.srt': 'application/x-subrip',
+  '.vtt': 'text/vtt',
+  '.ass': 'application/x-ass',
+  '.ssa': 'application/x-ass',
+  '.smi': 'application/sami',
+  '.ttml': 'application/ttml+xml',
+};
 const MIME = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp',
   '.bmp': 'image/bmp', '.heic': 'image/heic', '.heif': 'image/heif',
@@ -158,6 +168,7 @@ const MIME = {
   '.ts': 'video/mp2t', '.m4v': 'video/mp4', '.mov': 'video/quicktime',
   '.html': 'text/html; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
+  ...SUBTITLE_MIME,
 };
 
 const kindOf = (filename) => {
@@ -166,6 +177,153 @@ const kindOf = (filename) => {
   if (VIDEO_EXT.has(ext)) return 'VIDEO';
   return null;
 };
+
+// ---------- 字幕文件自动关联 ----------
+// 查找范围始终是「视频所在文件夹」，与媒体库无关；命名约定：
+//   movie.mp4 + movie.srt / movie.chs.srt / movie.zh-Hans.srt / movie.简体.vtt
+//   movie.mp4 + Subs/movie.srt / Subtitles/Chinese/movie.srt（常见播放器字幕子目录）
+// 子目录命中的优先级低于同目录，同分时优先中文字幕。
+const SUBTITLE_LANG_SUFFIX = new RegExp(
+  '\\.(' + [
+    'chs', 'cht', 'sc', 'tc', 'cn', 'tw', 'hk', 'gb', 'big5',
+    'chi', 'chn', 'zho', 'zh', 'zh[-_]?hans', 'zh[-_]?hant', 'zh[-_]?cn', 'zh[-_]?tw', 'zh[-_]?hk',
+    'english', 'eng', 'en', 'japanese', 'jpn', 'jp', 'korean', 'kor', 'ko',
+    'fr', 'fre', 'fra', 'de', 'ger', 'deu', 'es', 'spa', 'ru', 'rus', 'it', 'ita', 'pt', 'por',
+    '中', '中文', '简体', '繁体', '简中', '繁中', '双语', '中英',
+  ].join('|') + ')$', 'i');
+const SUBTITLE_DIR_NAMES = new Set(['subs', 'sub', 'subtitles', 'subtitle', '字幕']);
+const CHINESE_HINT = /(chs|cht|zh|chi|chn|zho|cn|tw|hk|gb|big5|中|简|繁)/i;
+
+/** 字幕基名与视频基名的匹配度：0 完全同名，1 去掉语言后缀后同名，-1 不匹配。 */
+function subtitleNameScore(subBase, baseLower) {
+  const lower = subBase.toLowerCase();
+  if (lower === baseLower) return 0;
+  if (lower.replace(SUBTITLE_LANG_SUFFIX, '') === baseLower) return 1;
+  return -1;
+}
+
+/** 收集某个目录下与 base 匹配的字幕文件，scoreBase 用于降低子目录命中优先级。 */
+function collectSubtitleCandidates(dir, base, scoreBase, out, readDir) {
+  for (const entry of readDir(dir)) {
+    if (!entry.isFile()) continue;
+    const ext = path.extname(entry.name).slice(1).toLowerCase();
+    if (!SUBTITLE_EXT.has(ext)) continue;
+    const subBase = path.basename(entry.name, path.extname(entry.name));
+    const score = subtitleNameScore(subBase, base);
+    if (score < 0) continue;
+    out.push({
+      full: path.join(dir, entry.name),
+      score: scoreBase + score,
+      zh: CHINESE_HINT.test(subBase) ? 0 : 1,
+    });
+  }
+}
+
+/** 在 Subs/Subtitles/字幕 等子目录里递归找两层（对应 Subs/Chinese/movie.srt）。 */
+function collectFromSubtitleDirs(dir, base, out, depth, readDir) {
+  for (const entry of readDir(dir)) {
+    if (!entry.isDirectory()) continue;
+    const sub = path.join(dir, entry.name);
+    collectSubtitleCandidates(sub, base, 4, out, readDir);
+    if (depth > 1) collectFromSubtitleDirs(sub, base, out, depth - 1, readDir);
+  }
+}
+
+/**
+ * 在视频所在文件夹（含 Subs 子目录）里找匹配的外挂字幕。
+ * 与主媒体目录无关：外部媒体库的原始路径同样适用。
+ * 传入 dirCache 可在一次扫描中复用目录列表，避免上千个视频重复 readdir。
+ */
+function findMatchingSubtitle(videoPath, dirCache = null) {
+  const readDir = (dir) => {
+    if (!dirCache) {
+      try { return fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+    }
+    if (!dirCache.has(dir)) {
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { /* 不可读目录 */ }
+      dirCache.set(dir, entries);
+    }
+    return dirCache.get(dir);
+  };
+
+  const dir = path.dirname(videoPath);
+  const base = path.basename(videoPath, path.extname(videoPath)).toLowerCase();
+  const candidates = [];
+  collectSubtitleCandidates(dir, base, 0, candidates, readDir);
+
+  // 只对常见字幕子目录深入，避免扫描整个目录树
+  for (const entry of readDir(dir)) {
+    if (entry.isDirectory() && SUBTITLE_DIR_NAMES.has(entry.name.toLowerCase())) {
+      const sub = path.join(dir, entry.name);
+      collectSubtitleCandidates(sub, base, 4, candidates, readDir);
+      collectFromSubtitleDirs(sub, base, candidates, 1, readDir);
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.score - b.score || a.zh - b.zh || a.full.localeCompare(b.full));
+  return candidates[0].full;
+}
+
+/**
+ * 网盘库版本：用 AList 的路径字符串模拟目录层级，规则与本地完全一致
+ * （同目录优先，其次 Subs/Subtitles/字幕 子目录及其下一层，同分优先中文）。
+ * @param videoPath 视频在云盘上的完整路径
+ * @param subsByDir Map<目录, [{path,name}]>
+ * @param dirsByParent Map<父目录, Set<子目录>>
+ */
+function findRemoteSubtitle(videoPath, subsByDir, dirsByParent) {
+  const dir = path.posix.dirname(videoPath);
+  const base = path.posix.basename(videoPath, path.posix.extname(videoPath)).toLowerCase();
+  const candidates = [];
+
+  const collect = (searchDir, scoreBase) => {
+    for (const sub of subsByDir.get(searchDir) || []) {
+      const subBase = path.posix.basename(sub.name, path.posix.extname(sub.name));
+      const score = subtitleNameScore(subBase, base);
+      if (score < 0) continue;
+      candidates.push({ sub, score: scoreBase + score, zh: CHINESE_HINT.test(subBase) ? 0 : 1 });
+    }
+  };
+
+  collect(dir, 0);
+  for (const child of dirsByParent.get(dir) || []) {
+    if (!SUBTITLE_DIR_NAMES.has(path.posix.basename(child).toLowerCase())) continue;
+    collect(child, 4);
+    for (const grand of dirsByParent.get(child) || []) collect(grand, 4);
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.score - b.score || a.zh - b.zh || a.sub.path.localeCompare(b.sub.path));
+  return candidates[0].sub;
+}
+
+/**
+ * Copy a subtitle file into the main media dir under a stable name and link it to a
+ * media row. Keeping it in mainDir() means /media/<sub> is served by the same route
+ * as videos, and the file survives deletions in the source folder.
+ */
+async function storeSubtitleFile(subtitlePath, mediaRow) {
+  if (!subtitlePath || !mediaRow) return null;
+  const ext = path.extname(subtitlePath).toLowerCase() || '.srt';
+  const h = crypto.createHash('sha256');
+  h.update(mediaRow.filename);
+  h.update(mediaRow.id.toString());
+  const storeName = `sub_${h.digest('hex').slice(0, 16)}${ext}`;
+  const target = path.join(mainDir(), storeName);
+  try {
+    await fs.promises.copyFile(subtitlePath, target);
+    db.prepare('UPDATE media SET subtitle_file = ? WHERE id = ?').run(storeName, mediaRow.id);
+    // 媒体可能已在节目单里，唤醒长轮询让终端重新取 manifest
+    notifyContentChanged();
+    console.log(`[subtitle] 已关联 ${path.basename(subtitlePath)} -> ${mediaRow.orig_name || mediaRow.filename}`);
+    return storeName;
+  } catch (e) {
+    console.log(`[subtitle] 关联失败 ${path.basename(subtitlePath)}: ${e.message}`);
+    return null;
+  }
+}
 
 // ---------- 工具 ----------
 function send(res, code, body, type = 'application/json; charset=utf-8') {
@@ -644,6 +802,8 @@ async function scanLibraries(libs, progress = null) {
 
   let added = 0, skipped = 0, failed = 0;
   const errors = [];
+  // 一次扫描内复用目录列表：同目录上千个视频不会重复 readdir
+  const subDirCache = new Map();
 
   const processOne = async ({ file, lib }) => {
     const name = path.basename(file);
@@ -651,6 +811,8 @@ async function scanLibraries(libs, progress = null) {
     try {
       const statSize = fs.statSync(file).size;
       if (statSize <= 0) { failed++; errors.push(`${name}: 空文件`); return; }
+      // 必须在改名/搬移之前找同名字幕：主库的视频会被重命名为哈希串
+      const matchedSubtitle = kind === 'VIDEO' ? findMatchingSubtitle(file, subDirCache) : null;
       let sha256 = await sha256OfRange(file, 0, statSize - 1);
       let finalSize = statSize;
       let source = file, srcStart = 0, srcEnd = statSize - 1;
@@ -692,10 +854,15 @@ async function scanLibraries(libs, progress = null) {
         // 软链接不可用（如 Windows 未开开发者模式）时退回复制
         await copyRange(file, 0, statSize - 1, target);
       }
-      insertMedia.run(
+      const inserted = insertMedia.run(
         storeName, name.slice(0, 120), sha256, kind, finalSize,
         lib.id, lib.is_main ? null : file
       );
+      if (matchedSubtitle) {
+        await storeSubtitleFile(matchedSubtitle, {
+          id: Number(inserted.lastInsertRowid), filename: storeName, orig_name: name,
+        });
+      }
       added++;
     } catch (e) {
       failed++;
@@ -714,6 +881,25 @@ async function scanLibraries(libs, progress = null) {
       progress.added = added;
       progress.skipped = skipped;
       progress.failed = failed;
+    }
+  }
+
+  // 扫描后补关联：已入库但还没关联字幕的媒体（先扫描、后补字幕文件再扫一次的场景）
+  for (const lib of libs) {
+    const pending = db.prepare(
+      'SELECT * FROM media WHERE subtitle_file IS NULL AND library_id = ?' +
+      (lib.is_main ? '' : ' AND source_path IS NOT NULL')
+    ).all(lib.id);
+    for (const row of pending) {
+      if (lib.is_main) {
+        // 主库视频已重命名为哈希串，字幕可能按「哈希名」或「上传时的原文件名」放在媒体目录
+        const sub = findMatchingSubtitle(path.join(mainDir(), row.filename), subDirCache)
+          || findMatchingSubtitle(path.join(mainDir(), row.orig_name), subDirCache);
+        if (sub) await storeSubtitleFile(sub, row);
+      } else {
+        const sub = findMatchingSubtitle(row.source_path, subDirCache);
+        if (sub) await storeSubtitleFile(sub, row);
+      }
     }
   }
 
@@ -741,6 +927,9 @@ async function scanRemoteLibrary(lib, progress = null) {
   const errors = [];
   const found = [];
   let truncated = false;
+  // 字幕索引：按目录收集，扫描结束后给每个视频匹配同目录（或 Subs 子目录）的字幕
+  const subsByDir = new Map();
+  const dirsByParent = new Map();
 
   const walk = async (dir, depth) => {
     if (truncated || depth > 5) return;
@@ -757,7 +946,18 @@ async function scanRemoteLibrary(lib, progress = null) {
       if (entry.name.startsWith('.')) continue;
       const full = `${dir.replace(/\/+$/, '')}/${entry.name}`;
       if (entry.isDir) {
+        const children = dirsByParent.get(dir) || new Set();
+        children.add(full);
+        dirsByParent.set(dir, children);
         await walk(full, depth + 1);
+        continue;
+      }
+      const ext = path.extname(entry.name).slice(1).toLowerCase();
+      if (SUBTITLE_EXT.has(ext)) {
+        // 字幕不占媒体配额，只登记路径，播放时按需转发
+        const list = subsByDir.get(dir) || [];
+        list.push({ path: full, name: entry.name });
+        subsByDir.set(dir, list);
         continue;
       }
       if (!kindOf(entry.name)) continue;
@@ -788,8 +988,28 @@ async function scanRemoteLibrary(lib, progress = null) {
     added += 1;
   }
 
-  if (added) notifyContentChanged();
-  console.log(`[scan] ${lib.name} 远程扫描 ${found.length} 个，新增 ${added}，已入库 ${already}，失败 ${errors.length}`);
+  // 关联网盘字幕：覆盖本次新增与历史已入库但未关联的条目（先扫描、后补字幕再扫一次能生效）
+  const pending = db.prepare(
+    'SELECT id, remote_path FROM media WHERE library_id = ? AND remote_path IS NOT NULL AND subtitle_file IS NULL'
+  ).all(lib.id);
+  const setSubtitle = db.prepare(
+    'UPDATE media SET subtitle_file = ?, subtitle_remote_path = ? WHERE id = ?'
+  );
+  let linked = 0;
+  for (const row of pending) {
+    const sub = findRemoteSubtitle(row.remote_path, subsByDir, dirsByParent);
+    if (!sub) continue;
+    // 与本地字幕同样的合成文件名前缀，便于 /media/<name> 统一路由
+    const ext = path.posix.extname(sub.name).toLowerCase() || '.srt';
+    const storeName = `sub_${crypto.createHash('sha256')
+      .update(`ol:${lib.id}:${sub.path}`).digest('hex').slice(0, 16)}${ext}`;
+    setSubtitle.run(storeName, sub.path, row.id);
+    linked += 1;
+  }
+
+  if (added || linked) notifyContentChanged();
+  console.log(`[scan] ${lib.name} 远程扫描 ${found.length} 个，新增 ${added}，已入库 ${already}，` +
+    `字幕关联 ${linked}，失败 ${errors.length}`);
   return {
     libraries: [{ id: lib.id, name: lib.name }],
     limit: MAX_FILES, scanned: found.length, already, added, skipped: 0,
@@ -859,19 +1079,19 @@ async function openUpstream(target, rangeHeader, clientSignal) {
   }
 }
 
-async function proxyRemoteMedia(req, res, name, row) {
-  const mime = MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
+async function proxyRemoteMedia(req, res, name, row, remotePath = row.remote_path, forceMime = '') {
+  const mime = forceMime || MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
   const client = new AbortController();
   res.on('close', () => client.abort());
 
   let upstream;
   try {
-    const target = await remoteDirectUrl(row, row.remote_path);
+    const target = await remoteDirectUrl(row, remotePath);
     upstream = await openUpstream(target, req.headers.range, client.signal);
     // 直链已过期：云盘回 401/403，丢掉缓存重取一次再试。
     if (upstream.status === 401 || upstream.status === 403) {
       if (upstream.body) await upstream.body.cancel().catch(() => {});
-      const fresh = await remoteDirectUrl(row, row.remote_path, true);
+      const fresh = await remoteDirectUrl(row, remotePath, true);
       upstream = await openUpstream(fresh, req.headers.range, client.signal);
     }
   } catch (e) {
@@ -884,7 +1104,8 @@ async function proxyRemoteMedia(req, res, name, row) {
   }
 
   const out = {
-    'Content-Type': upstream.headers.get('content-type') || mime,
+    // 云盘直链常返回 application/octet-stream，字幕必须用扩展名对应的 MIME
+    'Content-Type': forceMime || upstream.headers.get('content-type') || mime,
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'no-store',
   };
@@ -951,6 +1172,17 @@ const server = http.createServer(async (req, res) => {
         WHERE m.filename = ? AND m.remote_path IS NOT NULL
       `).get(name);
       if (remote) return proxyRemoteMedia(req, res, name, remote);
+      // 网盘库的外挂字幕：subtitle_file 是合成名，真实文件在云盘上
+      const remoteSub = db.prepare(`
+        SELECT m.subtitle_remote_path AS remote_path, l.id AS library_id,
+               l.base_url, l.username, l.password
+        FROM media m JOIN libraries l ON l.id = m.library_id
+        WHERE m.subtitle_file = ? AND m.subtitle_remote_path IS NOT NULL
+      `).get(name);
+      if (remoteSub) {
+        return proxyRemoteMedia(req, res, name, remoteSub, remoteSub.remote_path,
+          MIME[path.extname(name).toLowerCase()] || 'text/plain; charset=utf-8');
+      }
       const file = storedFile(name);
       if (!file) return send(res, 404, { error: '媒体不存在' });
       const stat = fs.statSync(file);
@@ -1331,6 +1563,8 @@ const server = http.createServer(async (req, res) => {
       db.prepare('DELETE FROM media WHERE id = ?').run(row.id);
       const disabledSchedules = detachFromSchedules((it) => it.mediaId === row.id);
       if (!row.remote_path) removeStoredFile(row.filename);
+      // 清理关联的外部字幕文件
+      if (row.subtitle_file) removeStoredFile(row.subtitle_file);
       notifyContentChanged();
       return ok(res, { disabledSchedules });
     }

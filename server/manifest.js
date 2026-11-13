@@ -46,6 +46,7 @@ function mediaItem(mediaRow, durationSec) {
     kind: mediaRow.kind,
   };
   if (Number.isInteger(durationSec) && durationSec > 0) item.durationSec = durationSec;
+  if (mediaRow.subtitle_file) item.subtitleUrl = `media/${mediaRow.subtitle_file}`;
   return item;
 }
 

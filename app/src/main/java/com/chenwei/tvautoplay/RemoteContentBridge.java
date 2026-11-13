@@ -83,7 +83,7 @@ public final class RemoteContentBridge {
             } else {
                 name = "Remote video #" + seq;
             }
-            out.add(new PlaylistItem(it.url, name, it.kind, it.durationSec));
+            out.add(new PlaylistItem(it.url, name, it.kind, it.durationSec, it.subtitleUrl));
             seq++;
         }
         return out;

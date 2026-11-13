@@ -89,6 +89,16 @@ if (!mediaColumns.includes('sub_path')) {
   db.exec('ALTER TABLE media ADD COLUMN sub_path TEXT');
 }
 
+// 外部字幕文件：关联到视频的独立 .srt/.vtt/.ass 文件
+if (!mediaColumns.includes('subtitle_file')) {
+  db.exec('ALTER TABLE media ADD COLUMN subtitle_file TEXT');
+}
+
+// 网盘库字幕的云端路径；本地字幕用 subtitle_file 直接指向媒体目录里的文件
+if (!mediaColumns.includes('subtitle_remote_path')) {
+  db.exec('ALTER TABLE media ADD COLUMN subtitle_remote_path TEXT');
+}
+
 // 老库补 OpenList 接入所需字段
 const libraryColumns = db.prepare('PRAGMA table_info(libraries)').all().map((column) => column.name);
 for (const [name, type] of [

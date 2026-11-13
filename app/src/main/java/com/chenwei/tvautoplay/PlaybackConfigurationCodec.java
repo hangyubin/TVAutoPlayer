@@ -103,6 +103,9 @@ public final class PlaybackConfigurationCodec {
                 object.put("uri", item.uri());
                 object.put("name", item.displayName());
                 object.put("kind", item.kind().name());
+                if (item.subtitleUri() != null) {
+                    object.put("subtitleUri", item.subtitleUri());
+                }
                 array.put(object);
             } catch (JSONException exception) {
                 throw new IllegalStateException("Unable to serialize playlist", exception);
@@ -123,10 +126,15 @@ public final class PlaybackConfigurationCodec {
                 continue;
             }
             try {
+                String subtitleUri = object.has("subtitleUri") && !object.isNull("subtitleUri")
+                        ? object.optString("subtitleUri", null)
+                        : null;
                 items.add(new PlaylistItem(
                         uri,
                         object.optString("name", null),
-                        MediaKind.fromStoredValue(object.optString("kind", null))
+                        MediaKind.fromStoredValue(object.optString("kind", null)),
+                        null,
+                        subtitleUri
                 ));
             } catch (IllegalArgumentException exception) {
                 // Skip the invalid item and preserve the rest of the playlist.
