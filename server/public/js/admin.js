@@ -145,8 +145,9 @@ function renderMediaList() {
       ? `<img class="thumb" src="${url}" alt="" onclick="openPreview('${url}', 'IMAGE')">`
       : `<span class="thumb vid" onclick="openPreview('${url}', 'VIDEO')">▶ 视频</span>`;
     const folderLine = folderOf(m) ? `<div class="muted" style="font-size:11px">${esc(folderOf(m))}</div>` : '';
+    const subBadge = m.subtitle_file ? '<span class="tag sub" title="已关联外挂字幕">字幕</span>' : '';
     return `<tr>
-      <td>${thumb}</td><td title="${esc(m.orig_name)}">${esc(m.orig_name)}${folderLine}</td>
+      <td>${thumb}</td><td title="${esc(m.orig_name)}">${esc(m.orig_name)}${subBadge}${folderLine}</td>
       <td><span class="tag ${m.kind==='IMAGE'?'img':'vid'}">${m.kind==='IMAGE'?'图片':'视频'}</span></td>
       <td><span class="tag ${m.libraryIsMain ? 'img' : 'vid'}">${esc(m.libraryName || '主库')}</span></td>
       <td>${fmtSize(m.size)}</td>

@@ -28,6 +28,7 @@
   td.drag-handle { cursor: grab; color: #6b7280; white-space: nowrap; }
   .tag.img { background: #e3f0e8; color: #16633c; }
   .tag.vid { background: #e6ecf5; color: #1d4e89; }
+  .tag.sub { margin-left: 6px; background: #fff1e0; color: #8a4b00; }
   .muted { color: #8f959e; font-size: 13px; }
   #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: #1f2329; color: #fff; padding: 8px 16px; border-radius: 6px; display: none; z-index: 9; }
   .hidden { display: none !important; }

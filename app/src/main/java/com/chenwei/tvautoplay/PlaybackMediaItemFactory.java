@@ -42,21 +42,22 @@ public final class PlaybackMediaItemFactory {
         return builder.build();
     }
 
-    /** Build a SubtitleConfiguration for the given URI, guessing MIME from file extension. */
+    /**
+     * Build a SubtitleConfiguration for the given URI, guessing MIME from file extension.
+     * Only formats Media3's TextRenderer can parse are mapped here (SRT / VTT / ASS-SSA /
+     * TTML); the server never links anything else.
+     */
     private static MediaItem.SubtitleConfiguration subConfigFor(String subtitleUri) {
         String lower = subtitleUri.toLowerCase(Locale.ROOT);
         String mimeType;
         if (lower.endsWith(".vtt")) {
             mimeType = MimeTypes.TEXT_VTT;
         } else if (lower.endsWith(".ass") || lower.endsWith(".ssa")) {
-            mimeType = MimeTypes.BASE_TYPE_APPLICATION + "/x-ssa";
-        } else if (lower.endsWith(".sub")) {
-            // VobSub — the player needs a sibling .idx file with the same basename.
-            mimeType = MimeTypes.BASE_TYPE_APPLICATION + "/oindex";
-        } else if (lower.endsWith(".smi")) {
-            mimeType = MimeTypes.BASE_TYPE_TEXT + "/sami";
+            // Media3 registers its ASS/SSA parser under text/x-ssa; application/x-ssa
+            // is silently ignored and the track would never render.
+            mimeType = MimeTypes.TEXT_SSA;
         } else if (lower.endsWith(".ttml")) {
-            mimeType = MimeTypes.BASE_TYPE_APPLICATION + "/ttml+xml";
+            mimeType = MimeTypes.APPLICATION_TTML;
         } else {
             // Default to SRT — by far the most common.
             mimeType = MimeTypes.APPLICATION_SUBRIP;

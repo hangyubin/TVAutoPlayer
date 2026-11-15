@@ -39,19 +39,23 @@ function validateSchedule({ id, startMinute, endMinute, enabled }, others) {
   return errs;
 }
 
-function mediaItem(mediaRow, durationSec) {
+function mediaItem(mediaRow, durationSec, hasSubtitleFile) {
   const item = {
     url: `media/${mediaRow.filename}`,
     sha256: mediaRow.sha256,
     kind: mediaRow.kind,
   };
   if (Number.isInteger(durationSec) && durationSec > 0) item.durationSec = durationSec;
-  if (mediaRow.subtitle_file) item.subtitleUrl = `media/${mediaRow.subtitle_file}`;
+  // 本地字幕文件可能被直接删掉；这时继续下发 subtitleUrl 会让终端去加载一个 404 的
+  // 字幕源，Media3 会把字幕源加载失败当成播放错误，整条视频都放不出来。
+  const subtitleReady = mediaRow.subtitle_file
+    && (mediaRow.subtitle_remote_path || !hasSubtitleFile || hasSubtitleFile(mediaRow.subtitle_file));
+  if (subtitleReady) item.subtitleUrl = `media/${mediaRow.subtitle_file}`;
   return item;
 }
 
 // 由媒体 id 列表生成节目单项；条目为 {mediaId, durationSec} 或 {liveId}，跳过已删除/已停用引用
-function resolveItems(db, items) {
+function resolveItems(db, items, hasSubtitleFile) {
   const mediaStmt = db.prepare('SELECT * FROM media WHERE id = ?');
   const liveStmt = db.prepare('SELECT * FROM live_streams WHERE id = ? AND enabled = 1');
   const out = [];
@@ -62,24 +66,25 @@ function resolveItems(db, items) {
       continue;
     }
     const row = mediaStmt.get(it.mediaId);
-    if (row) out.push(mediaItem(row, it.durationSec));
+    if (row) out.push(mediaItem(row, it.durationSec, hasSubtitleFile));
   }
   return out;
 }
 
-function buildManifest(db, contentVersion) {
+function buildManifest(db, contentVersion, options = {}) {
+  const hasSubtitleFile = options.hasSubtitleFile;
   const draft = db.prepare(
     'SELECT media_id, duration_sec FROM program_items ORDER BY position'
   ).all();
   const defaultItems = resolveItems(db,
-    draft.map(r => ({ mediaId: r.media_id, durationSec: r.duration_sec })));
+    draft.map(r => ({ mediaId: r.media_id, durationSec: r.duration_sec })), hasSubtitleFile);
 
   const schedules = db.prepare('SELECT * FROM schedules').all().map(s => ({
     id: s.id,
     startMinute: s.start_minute,
     endMinute: s.end_minute,
     enabled: !!s.enabled,
-    program: { items: resolveItems(db, JSON.parse(s.items_json)) },
+    program: { items: resolveItems(db, JSON.parse(s.items_json), hasSubtitleFile) },
   }));
 
   return {

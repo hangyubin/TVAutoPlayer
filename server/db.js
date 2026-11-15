@@ -98,6 +98,8 @@ if (!mediaColumns.includes('subtitle_file')) {
 if (!mediaColumns.includes('subtitle_remote_path')) {
   db.exec('ALTER TABLE media ADD COLUMN subtitle_remote_path TEXT');
 }
+// /media/<subtitle> 每次请求都要按合成名反查，走索引避免全表扫描
+db.exec('CREATE INDEX IF NOT EXISTS idx_media_subtitle_file ON media(subtitle_file)');
 
 // 老库补 OpenList 接入所需字段
 const libraryColumns = db.prepare('PRAGMA table_info(libraries)').all().map((column) => column.name);

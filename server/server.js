@@ -151,14 +151,16 @@ function requireAuth(req, res) {
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'heic', 'heif']);
 const VIDEO_EXT = new Set(['mp4', 'mkv', 'webm', 'ts', 'm4v', 'mov']);
-// 字幕文件：Media3 可解析的文本字幕格式
-const SUBTITLE_EXT = new Set(['srt', 'vtt', 'ass', 'ssa', 'smi', 'ttml', 'txt']);
+// 字幕文件：只收录 Media3 TextRenderer 真正能解析的格式。
+// SAMI(.smi)/VobSub(.sub) 没有对应解析器，.txt 多数不是 SRT 内容，
+// 误关联会让终端解析失败甚至中断播放，故都不收。
+const SUBTITLE_EXT = new Set(['srt', 'vtt', 'ass', 'ssa', 'ttml']);
 const SUBTITLE_MIME = {
   '.srt': 'application/x-subrip',
   '.vtt': 'text/vtt',
-  '.ass': 'application/x-ass',
-  '.ssa': 'application/x-ass',
-  '.smi': 'application/sami',
+  // Media3 的 ASS/SSA 解析器注册在 text/x-ssa 上
+  '.ass': 'text/x-ssa',
+  '.ssa': 'text/x-ssa',
   '.ttml': 'application/ttml+xml',
 };
 const MIME = {
@@ -315,8 +317,6 @@ async function storeSubtitleFile(subtitlePath, mediaRow) {
   try {
     await fs.promises.copyFile(subtitlePath, target);
     db.prepare('UPDATE media SET subtitle_file = ? WHERE id = ?').run(storeName, mediaRow.id);
-    // 媒体可能已在节目单里，唤醒长轮询让终端重新取 manifest
-    notifyContentChanged();
     console.log(`[subtitle] 已关联 ${path.basename(subtitlePath)} -> ${mediaRow.orig_name || mediaRow.filename}`);
     return storeName;
   } catch (e) {
@@ -885,9 +885,10 @@ async function scanLibraries(libs, progress = null) {
   }
 
   // 扫描后补关联：已入库但还没关联字幕的媒体（先扫描、后补字幕文件再扫一次的场景）
+  let linked = 0;
   for (const lib of libs) {
     const pending = db.prepare(
-      'SELECT * FROM media WHERE subtitle_file IS NULL AND library_id = ?' +
+      "SELECT * FROM media WHERE subtitle_file IS NULL AND kind = 'VIDEO' AND library_id = ?" +
       (lib.is_main ? '' : ' AND source_path IS NOT NULL')
     ).all(lib.id);
     for (const row of pending) {
@@ -895,17 +896,19 @@ async function scanLibraries(libs, progress = null) {
         // 主库视频已重命名为哈希串，字幕可能按「哈希名」或「上传时的原文件名」放在媒体目录
         const sub = findMatchingSubtitle(path.join(mainDir(), row.filename), subDirCache)
           || findMatchingSubtitle(path.join(mainDir(), row.orig_name), subDirCache);
-        if (sub) await storeSubtitleFile(sub, row);
+        if (sub && await storeSubtitleFile(sub, row)) linked += 1;
       } else {
         const sub = findMatchingSubtitle(row.source_path, subDirCache);
-        if (sub) await storeSubtitleFile(sub, row);
+        if (sub && await storeSubtitleFile(sub, row)) linked += 1;
       }
     }
   }
 
-  if (added) notifyContentChanged();
+  // 字幕关联也会改变 manifest，只有新增媒体时才唤醒会让补字幕要等下一个轮询周期
+  if (added || linked) notifyContentChanged();
   const names = libs.map((lib) => lib.name).join('、');
-  console.log(`[scan] ${names} 扫描 ${files.length} 个，新增 ${added}，重复 ${skipped}，失败 ${failed}`);
+  console.log(`[scan] ${names} 扫描 ${files.length} 个，新增 ${added}，重复 ${skipped}，` +
+    `字幕关联 ${linked}，失败 ${failed}`);
   return {
     libraries: libs.map((lib) => ({ id: lib.id, name: lib.name })),
     limit: MAX_FILES, scanned: files.length, already, added, skipped, failed, truncated,
@@ -990,7 +993,8 @@ async function scanRemoteLibrary(lib, progress = null) {
 
   // 关联网盘字幕：覆盖本次新增与历史已入库但未关联的条目（先扫描、后补字幕再扫一次能生效）
   const pending = db.prepare(
-    'SELECT id, remote_path FROM media WHERE library_id = ? AND remote_path IS NOT NULL AND subtitle_file IS NULL'
+    "SELECT id, remote_path FROM media WHERE library_id = ? AND kind = 'VIDEO'" +
+    ' AND remote_path IS NOT NULL AND subtitle_file IS NULL'
   ).all(lib.id);
   const setSubtitle = db.prepare(
     'UPDATE media SET subtitle_file = ?, subtitle_remote_path = ? WHERE id = ?'
@@ -1133,14 +1137,15 @@ const server = http.createServer(async (req, res) => {
     // 终端公开接口
     if (p === '/api/manifest' && req.method === 'GET') {
       // 直接由当前媒体 / 节目单 / 时段生成，保存后立即对终端可见
-      const manifest = buildManifest(db, 0);
+      const manifest = buildManifest(db, 0, { hasSubtitleFile: (name) => !!storedFile(name) });
       manifest.contentVersion = contentVersionOf(manifest);
       return send(res, 200, manifest);
     }
     if (p === '/api/watch' && req.method === 'GET') {
       // 长轮询：内容一变立即返回；无变化时最多挂起 WATCH_HOLD_MS 后返回当前版本
       const since = Number(url.searchParams.get('version') || '0');
-      const currentVersion = () => contentVersionOf(buildManifest(db, 0));
+      const currentVersion = () => contentVersionOf(
+        buildManifest(db, 0, { hasSubtitleFile: (name) => !!storedFile(name) }));
       const respond = () => {
         if (res.writableEnded) return;
         let v = since;
@@ -1164,27 +1169,31 @@ const server = http.createServer(async (req, res) => {
     }
     if (p.startsWith('/media/') && (req.method === 'GET' || req.method === 'HEAD')) {
       const name = path.basename(p.slice(7));
-      // OpenList 媒体没有本地文件：实时换直链后按 Range 转发给电视。
-      // 电视端始终只连本服务，云盘直链和账号凭证都不会暴露出去。
-      const remote = db.prepare(`
-        SELECT m.remote_path, l.id AS library_id, l.base_url, l.username, l.password
-        FROM media m JOIN libraries l ON l.id = m.library_id
-        WHERE m.filename = ? AND m.remote_path IS NOT NULL
-      `).get(name);
-      if (remote) return proxyRemoteMedia(req, res, name, remote);
-      // 网盘库的外挂字幕：subtitle_file 是合成名，真实文件在云盘上
-      const remoteSub = db.prepare(`
-        SELECT m.subtitle_remote_path AS remote_path, l.id AS library_id,
-               l.base_url, l.username, l.password
-        FROM media m JOIN libraries l ON l.id = m.library_id
-        WHERE m.subtitle_file = ? AND m.subtitle_remote_path IS NOT NULL
-      `).get(name);
-      if (remoteSub) {
-        return proxyRemoteMedia(req, res, name, remoteSub, remoteSub.remote_path,
-          MIME[path.extname(name).toLowerCase()] || 'text/plain; charset=utf-8');
-      }
+      // 本地文件走最快路径：绝大多数请求是主库媒体，先探文件系统再查库，
+      // 避免每个播放请求都多两次 SQL。
       const file = storedFile(name);
-      if (!file) return send(res, 404, { error: '媒体不存在' });
+      if (!file) {
+        // OpenList 媒体没有本地文件：实时换直链后按 Range 转发给电视。
+        // 电视端始终只连本服务，云盘直链和账号凭证都不会暴露出去。
+        const remote = db.prepare(`
+          SELECT m.remote_path, l.id AS library_id, l.base_url, l.username, l.password
+          FROM media m JOIN libraries l ON l.id = m.library_id
+          WHERE m.filename = ? AND m.remote_path IS NOT NULL
+        `).get(name);
+        if (remote) return proxyRemoteMedia(req, res, name, remote);
+        // 网盘库的外挂字幕：subtitle_file 是合成名，真实文件在云盘上
+        const remoteSub = db.prepare(`
+          SELECT m.subtitle_remote_path AS remote_path, l.id AS library_id,
+                 l.base_url, l.username, l.password
+          FROM media m JOIN libraries l ON l.id = m.library_id
+          WHERE m.subtitle_file = ? AND m.subtitle_remote_path IS NOT NULL
+        `).get(name);
+        if (remoteSub) {
+          return proxyRemoteMedia(req, res, name, remoteSub, remoteSub.remote_path,
+            SUBTITLE_MIME[path.extname(name).toLowerCase()] || 'text/plain; charset=utf-8');
+        }
+        return send(res, 404, { error: '媒体不存在' });
+      }
       const stat = fs.statSync(file);
       const mime = MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
       const range = req.headers['range'];

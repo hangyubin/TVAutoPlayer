@@ -2,6 +2,7 @@ package com.chenwei.tvautoplay;
 
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -33,7 +34,9 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.AspectRatioFrameLayout;
+import androidx.media3.ui.CaptionStyleCompat;
 import androidx.media3.ui.PlayerView;
+import androidx.media3.ui.SubtitleView;
 
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory;
 
@@ -902,13 +905,15 @@ public final class MainActivity extends ComponentActivity {
         // Container default flags are unreliable after remuxing, so pick the default
         // audio track by language: the TV's system language first, then the container
         // default flag, then the first track. A manual track pick always wins.
-        // Subtitles: prefer Chinese (zh) if present, otherwise fall back to the system
-        // language's text tracks. Never disable text tracks — the user may attach an
-        // external .srt that should be shown automatically.
+        // Subtitles: prefer Chinese (zh) if present; ensureSubtitleSelected() then falls back
+        // to the first usable text track. Text tracks are never disabled.
         player.setTrackSelectionParameters(
                 player.getTrackSelectionParameters().buildUpon()
                         .setPreferredAudioLanguage(Locale.getDefault().getLanguage())
                         .setPreferredTextLanguage("zh")
+                        // Side-loaded subtitle files usually carry no language tag; without this
+                        // the only way to select them would be a hard-coded track override.
+                        .setSelectUndeterminedTextLanguage(true)
                         .setPreferredTextRoleFlags(C.ROLE_FLAG_MAIN)
                         .build());
         player.addListener(new Player.Listener() {
@@ -941,6 +946,17 @@ public final class MainActivity extends ComponentActivity {
             }
 
             @Override
+            public void onMediaItemTransition(MediaItem mediaItem, int reason) {
+                // The previous item may have left a text override bound to its track group.
+                // Playlist entries can have different subtitle counts, so a stale index may
+                // be out of range or point at an unrelated track. Clear it on every switch.
+                player.setTrackSelectionParameters(
+                        player.getTrackSelectionParameters().buildUpon()
+                                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                .build());
+            }
+
+            @Override
             public void onTracksChanged(Tracks tracks) {
                 // Tracks are only published after the renderers have probed the media,
                 // which can happen slightly after STATE_READY. This is the reliable hook.
@@ -953,6 +969,20 @@ public final class MainActivity extends ComponentActivity {
         playerView.setFocusable(true);
         playerView.setFocusableInTouchMode(true);
         playerView.setPlayer(player);
+        // Default captions are plain white with no outline and vanish on bright scenes.
+        // An outlined style stays readable on a TV at viewing distance.
+        SubtitleView subtitleView = playerView.getSubtitleView();
+        if (subtitleView != null) {
+            subtitleView.setStyle(new CaptionStyleCompat(
+                    Color.WHITE,
+                    Color.TRANSPARENT,
+                    Color.TRANSPARENT,
+                    CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                    Color.BLACK,
+                    null));
+            // Lift captions a bit so they clear the controller and the TV overscan area.
+            subtitleView.setBottomPaddingFraction(0.10f);
+        }
         // Keep the branded screen up until the first frame is actually on screen, so the
         // startup never shows a black surface.
         showStandby(R.string.standby_waiting);
@@ -1228,6 +1258,9 @@ public final class MainActivity extends ComponentActivity {
         for (Tracks.Group group : tracks.getGroups()) {
             if (group.getType() != C.TRACK_TYPE_TEXT) continue;
             for (int i = 0; i < group.length; i++) {
+                // Selecting a track with no available parser (e.g. image subtitles) fails
+                // at render time, so skip unsupported tracks entirely.
+                if (!group.isTrackSupported(i)) continue;
                 Format format = group.getTrackFormat(i);
                 String lang = format.language != null ? format.language.toLowerCase(Locale.ROOT) : "";
                 String label = format.label != null ? format.label.toLowerCase(Locale.ROOT) : "";
