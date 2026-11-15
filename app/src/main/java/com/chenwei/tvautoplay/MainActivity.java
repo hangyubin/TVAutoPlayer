@@ -208,6 +208,12 @@ public final class MainActivity extends ComponentActivity {
     protected void onStart() {
         super.onStart();
         activityStarted = true;
+        // The clock tick pauses itself in the background; resume it if the branded
+        // screen is still on top while the first manifest arrives.
+        if (standbyPanel.getVisibility() == View.VISIBLE) {
+            mainHandler.removeCallbacks(standbyClockTick);
+            standbyClockTick.run();
+        }
         startConfiguredPlayback();
         startRemoteWatch();
         scheduleHandler.removeCallbacks(scheduleCheck);
@@ -761,6 +767,11 @@ public final class MainActivity extends ComponentActivity {
     private final Runnable standbyClockTick = new Runnable() {
         @Override
         public void run() {
+            // Do not keep waking up once the screen is in the background; onStart()
+            // restarts the loop when the branded screen is visible again.
+            if (!activityStarted) {
+                return;
+            }
             standbyClock.setText(STANDBY_CLOCK_FORMAT.format(new Date()));
             mainHandler.postDelayed(this, 1000L);
         }

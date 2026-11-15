@@ -327,6 +327,12 @@ async function storeSubtitleFile(subtitlePath, mediaRow) {
 
 // ---------- 工具 ----------
 function send(res, code, body, type = 'application/json; charset=utf-8') {
+  // A late error after streaming started cannot change the status line any more;
+  // writing headers twice would throw and leave the request hanging.
+  if (res.headersSent || res.writableEnded) {
+    res.destroy();
+    return;
+  }
   let data = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
   if (data == null) data = '';
   const headers = { 'Content-Type': type, 'Cache-Control': 'no-store' };
@@ -366,17 +372,27 @@ function linkExternal(src, dest) {
   return false;
 }
 
+// Management payloads (program lists, schedule items) are a few hundred KB at most.
+// readBody used the 8 GB upload limit, so one huge JSON body could exhaust memory.
+const MAX_JSON_BODY = 8 * 1024 * 1024;
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    let size = 0;
+    let size = 0, settled = false;
     req.on('data', (c) => {
+      if (settled) return;
       size += c.length;
-      if (size > MAX_UPLOAD) { reject(new Error('文件过大')); req.destroy(); return; }
+      if (size > MAX_JSON_BODY) {
+        settled = true;
+        // Keep draining instead of destroying the socket so the 413 response is delivered.
+        reject(Object.assign(new Error('请求体过大'), { status: 413 }));
+        return;
+      }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    req.on('end', () => { if (!settled) resolve(Buffer.concat(chunks)); });
+    req.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
   });
 }
 
@@ -800,7 +816,7 @@ async function scanLibraries(libs, progress = null) {
   );
   const findDuplicate = db.prepare('SELECT filename FROM media WHERE sha256 = ? AND kind = ?');
 
-  let added = 0, skipped = 0, failed = 0;
+  let added = 0, skipped = 0, failed = 0, linked = 0;
   const errors = [];
   // 一次扫描内复用目录列表：同目录上千个视频不会重复 readdir
   const subDirCache = new Map();
@@ -859,9 +875,11 @@ async function scanLibraries(libs, progress = null) {
         lib.id, lib.is_main ? null : file
       );
       if (matchedSubtitle) {
-        await storeSubtitleFile(matchedSubtitle, {
+        // Count it here too: newly added videos are the common case and used to
+        // report "字幕关联 0" even though the subtitle was linked successfully.
+        if (await storeSubtitleFile(matchedSubtitle, {
           id: Number(inserted.lastInsertRowid), filename: storeName, orig_name: name,
-        });
+        })) linked += 1;
       }
       added++;
     } catch (e) {
@@ -885,7 +903,6 @@ async function scanLibraries(libs, progress = null) {
   }
 
   // 扫描后补关联：已入库但还没关联字幕的媒体（先扫描、后补字幕文件再扫一次的场景）
-  let linked = 0;
   for (const lib of libs) {
     const pending = db.prepare(
       "SELECT * FROM media WHERE subtitle_file IS NULL AND kind = 'VIDEO' AND library_id = ?" +
@@ -1195,6 +1212,9 @@ const server = http.createServer(async (req, res) => {
         return send(res, 404, { error: '媒体不存在' });
       }
       const stat = fs.statSync(file);
+      // A directory here (e.g. GET /media/..) would make createReadStream emit EISDIR;
+      // without a handler that is an uncaught error and takes the whole server down.
+      if (!stat.isFile()) return send(res, 404, { error: '媒体不存在' });
       const mime = MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
       const range = req.headers['range'];
       const headers = {
@@ -1206,9 +1226,17 @@ const server = http.createServer(async (req, res) => {
       if (range) {
         const m = /bytes=(\d*)-(\d*)/.exec(range);
         if (m) {
-          const s = m[1] === '' ? 0 : parseInt(m[1], 10);
-          const e = m[2] === '' ? stat.size - 1 : parseInt(m[2], 10);
-          if (s >= stat.size) { res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` }); res.end(); return; }
+          // "bytes=-500" means the last 500 bytes, not "0..500".
+          const suffix = m[1] === '' && m[2] !== '';
+          const s = suffix
+            ? Math.max(0, stat.size - parseInt(m[2], 10))
+            : (m[1] === '' ? 0 : parseInt(m[1], 10));
+          const e = suffix || m[2] === '' ? stat.size - 1 : parseInt(m[2], 10);
+          if (Number.isNaN(s) || Number.isNaN(e) || s > e || s >= stat.size) {
+            res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
+            res.end();
+            return;
+          }
           start = s; end = Math.min(e, stat.size - 1); status = 206;
           headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
           headers['Content-Length'] = end - start + 1;
@@ -1217,7 +1245,11 @@ const server = http.createServer(async (req, res) => {
         headers['Content-Length'] = stat.size;
       }
       res.writeHead(status, headers);
-      return fs.createReadStream(file, { start, end }).pipe(res);
+      // The file can disappear between statSync and the first read; surface it as a
+      // dropped connection instead of crashing the process with an unhandled 'error'.
+      const stream = fs.createReadStream(file, { start, end });
+      stream.on('error', () => res.destroy());
+      return stream.pipe(res);
     }
     // 管理页面（始终可访问，未登录时 HTML 内会显示登录 UI）
     if ((p === '/' || p === '/admin') && req.method === 'GET') {
@@ -1450,18 +1482,26 @@ const server = http.createServer(async (req, res) => {
         // 跨分区 rename 会失败，退回复制后删源。
         const oldDir = row.path && path.resolve(row.path);
         if (oldDir && oldDir !== dir) {
-          for (const item of db.prepare('SELECT filename, remote_path FROM media WHERE library_id = ?').all(row.id)) {
+          const moveFile = (from, to) => {
+            if (!from || !fs.existsSync(from) || fs.existsSync(to)) return;
+            try { fs.renameSync(from, to); } catch {
+              try { fs.copyFileSync(from, to); fs.rmSync(from, { force: true }); } catch { /* 单个文件失败不影响换目录 */ }
+            }
+          };
+          for (const item of db.prepare('SELECT filename, subtitle_file, remote_path FROM media WHERE library_id = ?').all(row.id)) {
             if (item.remote_path) continue;
-            const src = path.join(oldDir, item.filename);
-            const dest = path.join(dir, item.filename);
-            if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
-            try { fs.renameSync(src, dest); } catch {
-              try { fs.copyFileSync(src, dest); fs.rmSync(src, { force: true }); } catch { /* 单个文件失败不影响换目录 */ }
+            moveFile(path.join(oldDir, item.filename), path.join(dir, item.filename));
+            // Synthesized subtitle files live next to the media and must follow it,
+            // otherwise every attached subtitle silently becomes a 404.
+            if (item.subtitle_file) {
+              moveFile(path.join(oldDir, item.subtitle_file), path.join(dir, item.subtitle_file));
             }
           }
         }
         db.prepare('UPDATE libraries SET path = ? WHERE id = ?').run(dir, row.id);
         resetMainDir();
+        // A file left behind by a failed move changes which subtitle URLs are valid.
+        notifyContentChanged();
       }
       return ok(res, { libraries: listLibraries() });
     }
@@ -1469,15 +1509,27 @@ const server = http.createServer(async (req, res) => {
       const row = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libMatch[1]);
       if (!row) return send(res, 404, { error: '媒体库不存在' });
       if (row.is_main) return bad(res, '主媒体库不能删除');
-      const items = db.prepare('SELECT id, filename, remote_path FROM media WHERE library_id = ?').all(row.id);
-      let disabledSchedules = 0;
-      for (const item of items) {
-        db.prepare('DELETE FROM media WHERE id = ?').run(item.id);
-        disabledSchedules += detachFromSchedules((it) => it.mediaId === item.id);
-        // 只删媒体目录里的引用或副本；远程库没有本地文件，外部库的源文件保持原样
-        if (!item.remote_path) removeStoredFile(item.filename);
+      const items = db.prepare('SELECT id, filename, subtitle_file, remote_path FROM media WHERE library_id = ?').all(row.id);
+      const removedIds = new Set(items.map((item) => item.id));
+      db.exec('BEGIN');
+      try {
+        db.prepare('DELETE FROM media WHERE library_id = ?').run(row.id);
+        db.prepare('DELETE FROM libraries WHERE id = ?').run(row.id);
+        db.exec('COMMIT');
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
       }
-      db.prepare('DELETE FROM libraries WHERE id = ?').run(row.id);
+      // One pass over the schedules instead of one per deleted media row: deleting a
+      // library with thousands of files used to re-parse every schedule thousands of times.
+      const disabledSchedules = detachFromSchedules((it) => removedIds.has(it.mediaId));
+      // 只删媒体目录里的引用或副本；远程库没有本地文件，外部库的源文件保持原样
+      for (const item of items) {
+        if (item.remote_path) continue;
+        removeStoredFile(item.filename);
+        // Synthesized subtitle copies belong to the deleted media row.
+        if (item.subtitle_file) removeStoredFile(item.subtitle_file);
+      }
       if (items.length) notifyContentChanged();
       console.log(`[library] 删除媒体库 ${row.name}，移除 ${items.length} 个媒体`);
       return ok(res, { removedMedia: items.length, disabledSchedules });

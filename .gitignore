@@ -15,6 +15,9 @@ captures/
 # CMS server runtime data
 server/data.db
 server/data.db-*
+server/data.db.bak-*
+# Local TV_DATA_DIR=./data dev runs keep the credential key here
+server/data/
 server/media/
 server/public/uploads/
 # Docker 部署的运行期数据：数据库/密钥与媒体列表分两个卷

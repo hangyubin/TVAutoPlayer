@@ -1,11 +1,19 @@
 const $ = (s) => document.querySelector(s);
 const api = async (m, url, body, isForm) => {
-  const r = await fetch(url, {
-    method: m,
-    credentials: 'same-origin',
-    headers: isForm ? undefined : { 'Content-Type': 'application/json' },
-    body: isForm ? body : (body ? JSON.stringify(body) : undefined),
-  });
+  let r;
+  try {
+    r = await fetch(url, {
+      method: m,
+      credentials: 'same-origin',
+      headers: isForm ? undefined : { 'Content-Type': 'application/json' },
+      body: isForm ? body : (body ? JSON.stringify(body) : undefined),
+    });
+  } catch {
+    // Network-level failure has no HTTP status; without this the page silently
+    // stays on stale data while the console only shows a TypeError.
+    toast('无法连接服务端，请检查网络或服务是否运行');
+    throw new Error('network_error');
+  }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { toast(data.error || ('错误 ' + r.status)); throw new Error(data.error); }
   return data;
