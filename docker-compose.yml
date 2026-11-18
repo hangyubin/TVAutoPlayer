@@ -1,7 +1,8 @@
 services:
   server:
-    # 默认拉取 CI 发布到 GHCR 的镜像；本地构建见 docker-compose.build.yml
-    image: ghcr.io/hangyubin/tvautoplayer-server:latest
+    # 版本与 APK 保持一致；升级时把 tag 改成新版本号再 docker compose pull
+    # 本地构建见 docker-compose.build.yml
+    image: ghcr.io/hangyubin/tvautoplayer-server:1.11.1
     container_name: tvautoplayer-server
     restart: unless-stopped
     ports:

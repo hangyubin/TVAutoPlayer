@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "server/**"
+      - "app/build.gradle.kts"
       - "docker-compose.yml"
       - ".github/workflows/docker.yml"
   workflow_dispatch:

@@ -25,3 +25,5 @@ server/public/uploads/
 /media/
 # Release binaries are distributed as GitHub Release assets
 dist/*.zip
+dist/*.sha256
+dist/*.tar

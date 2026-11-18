@@ -75,28 +75,17 @@ CREATE TABLE IF NOT EXISTS admin_user (
 
 // 轻量迁移：老数据库补列，避免升级时要求手工改库
 const mediaColumns = db.prepare('PRAGMA table_info(media)').all().map((column) => column.name);
-if (!mediaColumns.includes('source_path')) {
-  db.exec('ALTER TABLE media ADD COLUMN source_path TEXT');
-}
-if (!mediaColumns.includes('library_id')) {
-  db.exec('ALTER TABLE media ADD COLUMN library_id INTEGER REFERENCES libraries(id)');
-}
-if (!mediaColumns.includes('remote_path')) {
-  db.exec('ALTER TABLE media ADD COLUMN remote_path TEXT');
-}
-// 本地上传时保留的文件夹相对路径（如 动漫/火影/第01集.mp4），用于按文件夹分类展示
-if (!mediaColumns.includes('sub_path')) {
-  db.exec('ALTER TABLE media ADD COLUMN sub_path TEXT');
-}
-
-// 外部字幕文件：关联到视频的独立 .srt/.vtt/.ass 文件
-if (!mediaColumns.includes('subtitle_file')) {
-  db.exec('ALTER TABLE media ADD COLUMN subtitle_file TEXT');
-}
-
-// 网盘库字幕的云端路径；本地字幕用 subtitle_file 直接指向媒体目录里的文件
-if (!mediaColumns.includes('subtitle_remote_path')) {
-  db.exec('ALTER TABLE media ADD COLUMN subtitle_remote_path TEXT');
+for (const [name, type] of [
+  ['source_path', 'TEXT'],
+  ['library_id', 'INTEGER REFERENCES libraries(id)'],
+  ['remote_path', 'TEXT'],
+  // 本地上传时保留的文件夹相对路径（如 动漫/火影/第01集.mp4），用于按文件夹分类展示
+  ['sub_path', 'TEXT'],
+  // 外挂字幕：本地字幕存文件名，网盘字幕另存云端路径
+  ['subtitle_file', 'TEXT'],
+  ['subtitle_remote_path', 'TEXT'],
+]) {
+  if (!mediaColumns.includes(name)) db.exec(`ALTER TABLE media ADD COLUMN ${name} ${type}`);
 }
 // /media/<subtitle> 每次请求都要按合成名反查，走索引避免全表扫描
 db.exec('CREATE INDEX IF NOT EXISTS idx_media_subtitle_file ON media(subtitle_file)');

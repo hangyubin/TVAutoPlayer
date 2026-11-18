@@ -9,8 +9,6 @@ const api = async (m, url, body, isForm) => {
       body: isForm ? body : (body ? JSON.stringify(body) : undefined),
     });
   } catch {
-    // Network-level failure has no HTTP status; without this the page silently
-    // stays on stale data while the console only shows a TypeError.
     toast('无法连接服务端，请检查网络或服务是否运行');
     throw new Error('network_error');
   }
@@ -127,19 +125,29 @@ const inFolder = (m, f) => {
   if (!f) return mf === '';           // 本地媒体（含本地上传的根目录文件）
   return mf === f || mf.startsWith(f + '/');
 };
+// 统一筛选口径：媒体库 + 类型 + 关键词（同时匹配文件名与目录路径）
+const mediaMatch = (m, { lib = '', kind = '', kw = '' } = {}) => {
+  if (lib && (m.libraryName || '主媒体库') !== lib) return false;
+  if (kind && m.kind !== kind) return false;
+  return !kw || `${m.orig_name} ${m.remote_path || ''} ${m.sub_path || ''}`.toLowerCase().includes(kw);
+};
+// 按文件夹分组计数，供选择器的文件夹总览使用
+const folderCounts = (items) => {
+  const groups = new Map();
+  for (const m of items) {
+    const f = folderOf(m);
+    groups.set(f, (groups.get(f) || 0) + 1);
+  }
+  return groups;
+};
 function renderMediaList() {
   const kw = ($('#mediaSearch').value || '').trim().toLowerCase();
   const lib = $('#mediaLib').value;
   const folder = $('#mediaFolder').value;
   const kind = $('#mediaKind').value;
   const size = +$('#mediaSize').value || 20;
-  const filtered = media.filter((m) => {
-    if (lib && (m.libraryName || '主媒体库') !== lib) return false;
-    if (folder && folderOf(m) !== folder) return false;
-    if (kind && m.kind !== kind) return false;
-    // 额外匹配目录路径（网盘 remote_path / 本地上传 sub_path），便于用剧名或文件夹名搜索
-    return !kw || `${m.orig_name} ${m.remote_path || ''} ${m.sub_path || ''}`.toLowerCase().includes(kw);
-  });
+  const filtered = media.filter((m) =>
+    (!folder || folderOf(m) === folder) && mediaMatch(m, { lib, kind, kw }));
   // 排序：默认文件名自然排序（适配剧集编号）
   let list;
   if (mediaSort === 'time') list = filtered.slice().sort((a, b) => b.id - a.id);
@@ -253,7 +261,7 @@ window.delMedia = async (id) => {
 const fmtSize = (n) => n > 1048576 ? (n/1048576).toFixed(1)+' MB' : Math.ceil(n/1024)+' KB';
 const fmtSpeed = (b) => b > 1048576 ? (b/1048576).toFixed(1)+' MB/s' : Math.ceil(b/1024)+' KB/s';
 // 上传队列：持久化状态，支持暂停/继续/删除单个排队项
-let currentXhr = null, queueAbort = false, queueXhrs = [];
+let queueAbort = false, queueXhrs = [];
 let uploadItems = [], uploading = false, uploadSourceInput = null;
 const upBox = () => $('#uploadBox'), fill = () => $('#barFill'), state = () => $('#upState'), right = () => $('#upRight'), queues = () => $('#queues');
 function showUp() { upBox().classList.add('show'); }
@@ -303,6 +311,15 @@ function uploadOne(item, total) {
     state().textContent = `[${doneCount + 1}/${total}] 上传 ${file.name}`;
     state().classList.remove('err');
     right().textContent = fmtSize(file.size);
+    const failUpload = (title, tip, label) => {
+      fill().classList.remove('indeterminate');
+      if (queueAbort) return;
+      state().textContent = `${title}：${file.name}`;
+      state().classList.add('err');
+      right().textContent = tip;
+      item.status = 'fail'; item.label = label; item.tagBg = '#ffe3e3'; item.tagColor = '#b71c1c';
+      renderQueue();
+    };
 
     xhr.upload.onprogress = (e) => {
       if (queueAbort) { xhr.abort(); return; }
@@ -348,22 +365,12 @@ function uploadOne(item, total) {
       resolve({ ok, result, duplicated: dup });
     };
     xhr.onerror = () => {
-      fill().classList.remove('indeterminate');
-      if (queueAbort) { resolve({ ok: false, aborted: true }); return; }
-      state().textContent = `上传中断：${file.name}`;
-      state().classList.add('err');
-      right().textContent = '网络断开、文件超过大小上限或服务端已停止';
-      item.status = 'fail'; item.label = '✗'; item.tagBg = '#ffe3e3'; item.tagColor = '#b71c1c';
-      renderQueue(); resolve({ ok: false });
+      failUpload('上传中断', '网络断开、文件超过大小上限或服务端已停止', '✗');
+      resolve({ ok: false, aborted: queueAbort });
     };
     xhr.ontimeout = () => {
-      fill().classList.remove('indeterminate');
-      if (queueAbort) { resolve({ ok: false, aborted: true }); return; }
-      state().textContent = `上传超时：${file.name}`;
-      state().classList.add('err');
-      right().textContent = '网络过慢，建议改用「扫描媒体文件夹」导入';
-      item.status = 'fail'; item.label = '超时'; item.tagBg = '#ffe3e3'; item.tagColor = '#b71c1c';
-      renderQueue(); resolve({ ok: false });
+      failUpload('上传超时', '网络过慢，建议改用「扫描媒体文件夹」导入', '超时');
+      resolve({ ok: false, aborted: queueAbort });
     };
     xhr.onabort = () => { resolve({ ok: false, aborted: true }); };
     xhr.withCredentials = true;
@@ -451,12 +458,13 @@ const pick = {
   type: 'LOCAL', mode: 'add', libId: null, path: '', parent: null, dirs: [],
   baseUrl: '', username: '', password: '', connected: false,
 };
+const pickReset = (over = {}) => Object.assign(pick, {
+  type: 'LOCAL', mode: 'add', libId: null, path: '', parent: null, dirs: [],
+  baseUrl: '', username: '', password: '', connected: false,
+}, over);
 
 function pickOpen() {
-  Object.assign(pick, {
-    type: 'LOCAL', mode: 'add', libId: null, path: '', parent: null, dirs: [],
-    baseUrl: '', username: '', password: '', connected: false,
-  });
+  pickReset();
   $('#pickBase').value = ''; $('#pickUser').value = ''; $('#pickPass').value = ''; $('#pickName').value = '';
   $('#pickCred').classList.add('hidden');
   document.querySelectorAll('.pick-src').forEach((el) => {
@@ -473,10 +481,7 @@ function pickOpen() {
 // 主媒体库更换存储文件夹：只允许本地目录，选中后保存并重新扫描
 function pickMainPath(id) {
   const lib = libraries.find((l) => l.id === id);
-  Object.assign(pick, {
-    type: 'LOCAL', mode: 'main', libId: id, path: '', parent: null, dirs: [],
-    baseUrl: '', username: '', password: '', connected: false,
-  });
+  pickReset({ mode: 'main', libId: id });
   $('#pickCred').classList.add('hidden');
   document.querySelectorAll('.pick-src').forEach((el) => {
     el.style.display = el.dataset.type === 'ALIST' ? 'none' : '';
@@ -925,10 +930,7 @@ function renderPicker() {
   }
   const only = sel.value;
   const kw = ($('#progSearch').value || '').trim().toLowerCase();
-  const list = media.filter((m) => {
-    if (only && (m.libraryName || '主媒体库') !== only) return false;
-    return !kw || `${m.orig_name} ${m.remote_path || ''} ${m.sub_path || ''}`.toLowerCase().includes(kw);
-  });
+  const list = media.filter((m) => mediaMatch(m, { lib: only, kw }));
   const items = list.filter((m) => !progKind || m.kind === progKind);
   const count = (kind) => kind ? list.filter((m) => m.kind === kind).length : list.length;
   $('#progKind').innerHTML = [['', '全部'], ['IMAGE', '图片'], ['VIDEO', '视频']]
@@ -960,11 +962,7 @@ function renderPicker() {
     </div>`;
   // 文件夹总览
   if (!kw && pickFolder === null) {
-    const groups = new Map();
-    for (const m of items) {
-      const f = folderOf(m);
-      groups.set(f, (groups.get(f) || 0) + 1);
-    }
+    const groups = folderCounts(items);
     if (groups.size > 1 || !groups.has('')) {
       $('#progPickList').innerHTML = Array.from(groups.entries())
         .sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'))
@@ -987,7 +985,7 @@ function renderPicker() {
   }
   // 文件夹内部 / 搜索结果：平铺渲染，但限制数量防止卡顿
   // pickFolder 为 null 表示未进入文件夹（如只有本地媒体、没有可分组目录），此时展示全部素材
-  let view = kw || pickFolder === null ? items : items.filter((m) => folderOf(m) === pickFolder);
+  let view = (kw || pickFolder === null) ? items : items.filter((m) => folderOf(m) === pickFolder);
   // 排序：默认文件名自然排序（第01集、第02集…第10集 正确排序）
   if (pickSort === 'time') view = view.slice().sort((a, b) => b.id - a.id);
   else if (pickSort === 'folder') view = view.slice().sort((a, b) => naturalCompare(folderOf(a) + '/' + a.orig_name, folderOf(b) + '/' + b.orig_name));
@@ -1109,17 +1107,18 @@ $('#progSave').onclick = async () => {
 };
 
 // ----- 时段计划 -----
+function fmtMin(m) {
+  return `${String(m / 60 | 0).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
 const minuteOpts = () => {
   let h = '';
-  for (let m = 0; m < 1440; m += 30)
-    h += `<option value="${m}">${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart(2,'0')}</option>`;
+  for (let m = 0; m < 1440; m += 30) h += `<option value="${m}">${fmtMin(m)}</option>`;
   return h;
 };
 $('#schStart').innerHTML = minuteOpts(); $('#schEnd').innerHTML = minuteOpts();
 $('#schStart').value = 480; $('#schEnd').value = 1080;
 let schedules = [];
 let schTimeEditing = -1;
-const fmtMin = (m) => `${String(m/60|0).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
 
 async function loadSchedules() {
   await ensureMedia();
@@ -1136,6 +1135,8 @@ function renderSchedules() {
       <td>${it.durationSec ? it.durationSec+' 秒' : '<span class="muted">默认</span>'}</td>
       <td><button class="btn warn" onclick="schRmItem(${si},${i})">移除</button></td></tr>`).join('')
       || '<tr><td colspan="4" class="muted">暂无内容</td></tr>';
+    const first = s.items[0];
+    const firstName = first ? itemNameOf(first) : '';
     const timeEdit = schTimeEditing === si
       ? `<div class="row" style="margin-top:8px">
           <select id="editStart">${minuteOpts()}</select><span>至</span><select id="editEnd">${minuteOpts()}</select>
@@ -1146,7 +1147,7 @@ function renderSchedules() {
       <div class="row">
         <strong>${fmtMin(s.startMinute)} - ${fmtMin(s.endMinute)}${s.endMinute < s.startMinute ? '（跨午夜）' : ''}</strong>
         <span class="tag">${s.enabled ? '启用' : '停用'}</span>
-        <span class="muted">${s.items.length ? esc(itemNameOf(s.items[0])) : '无内容'}</span>
+        <span class="muted">${s.items.length ? esc(firstName) : '无内容'}</span>
         <span class="grow"></span>
         <button class="btn sub" onclick="schStartEditTime(${si})">修改时间</button>
         <button class="btn sub" onclick="toggleSch(${si})">${s.enabled ? '停用' : '启用'}</button>
@@ -1159,7 +1160,7 @@ function renderSchedules() {
       </tr></thead><tbody>${rows}</tbody></table>
       ${s.items.length
         ? `<div class="row" style="margin-top:8px">
-             <span class="muted grow" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(itemNameOf(s.items[0]))}">当前：${esc(itemNameOf(s.items[0]))}</span>
+             <span class="muted grow" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(firstName)}">当前：${esc(firstName)}</span>
              <input type="number" id="schItemDur${si}" min="1" placeholder="图片秒数" style="width:100px">
              <button class="btn sub" onclick="pickForSchedule(${si},'replace')">更换素材</button>
            </div>`
@@ -1220,14 +1221,15 @@ schList.addEventListener('drop', (e) => {
 
 window.schStartEditTime = (si) => { schTimeEditing = si; renderSchedules(); };
 window.schCancelTime = () => { schTimeEditing = -1; renderSchedules(); };
+// 改时间 / 启停 / 保存都提交当前时段的完整内容，只是覆盖字段不同
+const putSchedule = (s, patch = {}) => api('PUT', '/api/schedules/' + s.id, {
+  startMinute: s.startMinute, endMinute: s.endMinute, enabled: s.enabled, items: s.items, ...patch,
+});
 window.schSaveTime = async (si) => {
   const st = +$('#editStart').value, en = +$('#editEnd').value;
   if (st === en) return toast('开始与结束时间不能相同');
-  const s = schedules[si];
   try {
-    await api('PUT', '/api/schedules/' + s.id, {
-      startMinute: st, endMinute: en, enabled: s.enabled, items: s.items,
-    });
+    await putSchedule(schedules[si], { startMinute: st, endMinute: en });
     schTimeEditing = -1;
     toast('时间已保存');
     loadSchedules();
@@ -1235,7 +1237,14 @@ window.schSaveTime = async (si) => {
 };
 // ----- 通用内容选择弹窗：文件夹分层 + 搜索，选中即回调 -----
 const pmState = { lib: '', kw: '', kind: '', folder: null, onPick: null };
-const pmLabelOf = (val) => val.startsWith('live:') ? liveNameOf(+val.slice(5)) : mediaNameOf(+val);
+// 选择器回传值：live:<id> 或 media:<id>
+const parsePickValue = (val) => val.startsWith('live:')
+  ? { liveId: +val.slice(5) }
+  : { mediaId: +val };
+const pmLabelOf = (val) => {
+  const sel = parsePickValue(val);
+  return sel.liveId != null ? liveNameOf(sel.liveId) : mediaNameOf(sel.mediaId);
+};
 async function openMediaPicker(title, onPick) {
   await ensureMedia();
   if (!lives.length) { try { await loadLive(); } catch {} }
@@ -1256,11 +1265,8 @@ function renderPm() {
   libSel.innerHTML = '<option value="">全部媒体库</option>' +
     names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
   libSel.value = names.includes(pmState.lib) ? pmState.lib : '';
-  const list = media.filter((m) => {
-    if (pmState.lib && (m.libraryName || '主媒体库') !== pmState.lib) return false;
-    if (pmState.kind && m.kind !== pmState.kind) return false;
-    return !pmState.kw || `${m.orig_name} ${m.remote_path || ''}`.toLowerCase().includes(pmState.kw);
-  });
+  const list = media.filter((m) =>
+    mediaMatch(m, { lib: pmState.lib, kind: pmState.kind, kw: pmState.kw }));
   const parts = [];
   const cardOf = (m) => `
     <div class="pick-card" data-id="${m.id}" title="${esc(m.orig_name)}">
@@ -1286,8 +1292,7 @@ function renderPm() {
   }
   // 顶层先给文件夹总览，点进去再看素材，避免几千个卡片一次性渲染
   if (atRoot) {
-    const groups = new Map();
-    for (const m of list) { const f = folderOf(m); groups.set(f, (groups.get(f) || 0) + 1); }
+    const groups = folderCounts(list);
     if (groups.size > 1 || !groups.has('')) {
       parts.push(...Array.from(groups.entries())
         .sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'))
@@ -1306,7 +1311,7 @@ function renderPm() {
     parts.push(`<div class="pick-crumb"><button class="btn sub" data-back="1" type="button">‹ 返回文件夹</button>
       <span class="muted">${esc(folderLabel(pmState.folder))} · 共 ${inside.length} 个</span></div>`);
   }
-  const view = pmState.kw || pmState.folder === null ? list : list.filter((m) => folderOf(m) === pmState.folder);
+  const view = (pmState.kw || pmState.folder === null) ? list : list.filter((m) => folderOf(m) === pmState.folder);
   parts.push(...view.slice(0, PICK_RENDER_MAX).map(cardOf));
   if (view.length > PICK_RENDER_MAX) {
     parts.push(`<div class="pick-crumb muted">只显示前 ${PICK_RENDER_MAX} 个，请用搜索或文件夹缩小范围</div>`);
@@ -1333,11 +1338,12 @@ $('#pickModal').onclick = (e) => { if (e.target === $('#pickModal')) closeMediaP
 window.pickForSchedule = (si, mode) => openMediaPicker(
   mode === 'replace' ? '更换时段内容' : '选择时段内容',
   (val) => {
+    const sel = parsePickValue(val);
     let item;
-    if (val.startsWith('live:')) {
-      item = { liveId: +val.slice(5) };
+    if (sel.liveId != null) {
+      item = sel;
     } else {
-      const m = media.find((x) => x.id === +val);
+      const m = media.find((x) => x.id === sel.mediaId);
       if (!m) return toast('媒体不存在');
       const dur = +($(`#schItemDur${si}`)?.value || 0) || null;
       item = { mediaId: m.id, durationSec: m.kind === 'IMAGE' ? dur : null };
@@ -1358,9 +1364,7 @@ window.toggleSch = async (si) => {
   const s = schedules[si];
   const next = !s.enabled;
   try {
-    await api('PUT', '/api/schedules/' + s.id, {
-      startMinute: s.startMinute, endMinute: s.endMinute, enabled: next, items: s.items,
-    });
+    await putSchedule(s, { enabled: next });
     toast(next ? '时段已启用' : '时段已停用');
     loadSchedules();
   } catch {}
@@ -1369,9 +1373,7 @@ window.saveSch = async (si) => {
   const s = schedules[si];
   if (!s.items.length) return toast('时段节目单不能为空');
   try {
-    await api('PUT', '/api/schedules/' + s.id, {
-      startMinute: s.startMinute, endMinute: s.endMinute, enabled: s.enabled, items: s.items,
-    });
+    await putSchedule(s);
     toast('时段已保存');
     loadSchedules();
   } catch {}
@@ -1388,14 +1390,14 @@ $('#schPickMedia').onclick = () => openMediaPicker('选择时段内容', (val) =
 });
 $('#schAdd').onclick = async () => {
   const v = $('#schMedia').value; if (!v) return toast('请先选择时段内容');
+  const sel = parsePickValue(v);
   let item;
-  if (v.startsWith('live:')) {
-    item = { liveId: +v.slice(5) };
+  if (sel.liveId != null) {
+    item = sel;
   } else {
-    const mediaId = +v;
-    const m = media.find(x => x.id === mediaId);
+    const m = media.find(x => x.id === sel.mediaId);
     if (!m) return toast('媒体不存在');
-    item = { mediaId, durationSec: m.kind === 'IMAGE' ? (+$('#schDur').value || null) : null };
+    item = { mediaId: m.id, durationSec: m.kind === 'IMAGE' ? (+$('#schDur').value || null) : null };
   }
   try {
     await api('POST', '/api/schedules', {

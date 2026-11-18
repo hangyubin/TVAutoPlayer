@@ -2,7 +2,7 @@
 
 ## 测试部署
 
-1. 从 [GitHub Release v1.8.0](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.8.0) 下载 `TVAutoPlayer-v1.8.0-debug.apk` 并复制到 U 盘。
+1. 从 [GitHub Release v1.11.1](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.11.1) 下载 `TVAutoPlayer-v1.11.1-debug.apk` 并复制到 U 盘。
 2. 电视开启“允许安装未知来源应用”。
 3. 安装 APK，首次打开后授予照片和视频只读权限，在内置媒体库中选择图片或视频。
 4. 在电视的应用/电池/后台管理中允许本应用自启动和后台运行。
@@ -114,7 +114,9 @@ loginctl enable-linger "$USER"
 
 ### Windows（免安装绿色包）
 
-1. 下载 Release 中的 `TVAutoPlayer-Server-Windows.zip` 并解压，建议使用纯英文短路径。
+> `TVAutoPlayer-Server-Windows.zip` 只发布到 v1.7.0 及更早版本，其后的 Release 不再附带该包。使用新版服务端请选 Docker，或安装 Node.js 24 后直接运行 `server/启动服务.bat`（脚本会优先使用同目录 `node.exe`，没有则回退系统 Node）。
+
+1. 从 [v1.7.0 Release](https://github.com/hangyubin/TVAutoPlayer/releases/tag/v1.7.0) 下载 `TVAutoPlayer-Server-Windows.zip` 并解压，建议使用纯英文短路径。该包内的服务端代码停留在 v1.7.0，新功能请改用 Docker 或源码运行。
 2. 双击 `启动服务.bat`。首次运行时 Windows 防火墙提示请点「允许访问」，否则电视端无法连接。
 3. 浏览器会自动打开 `http://localhost:8300/`，默认账户 `admin / admin`，登录后立即修改密码。
 4. 需要旧封装 MKV 自动重封装时，双击 `安装ffmpeg.bat`；不安装只影响旧 MKV。
@@ -122,7 +124,7 @@ loginctl enable-linger "$USER"
 
 ### Docker
 
-镜像内置 Node 24 与 ffmpeg，无需在宿主机安装任何环境。CI 已把镜像发布到 GHCR，默认直接拉取，不必本地构建。
+镜像内置 Node 24 与 ffmpeg，无需在宿主机安装任何环境。CI 已把镜像发布到 GHCR，默认直接拉取，不必本地构建。`docker-compose.yml` 中固定了版本号（当前 `1.11.1`），避免 `latest` 漂移导致不同机器内容不一致。
 
 ```bash
 git clone https://github.com/hangyubin/TVAutoPlayer.git
@@ -135,8 +137,8 @@ docker compose up -d
 
 镜像地址：`ghcr.io/hangyubin/tvautoplayer-server`
 
-- `latest`：跟随 main 分支最新提交
-- `1.10.0` 等版本号：与 APK 同版本，取自 `app/build.gradle.kts`
+- `1.11.1` 等版本号：与 APK 同版本，取自 `app/build.gradle.kts`，compose 默认使用它
+- `latest`：跟随 main 分支最新提交，想自动跟随可自行把 tag 改成 `latest`
 - `sha-xxxxxxx`：按提交固定，便于回滚
 - 架构：`linux/amd64`、`linux/arm64`（树莓派、ARM NAS 可直接用）
 
@@ -148,7 +150,16 @@ docker compose up -d
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-升级：`git pull` 后 `docker compose pull && docker compose up -d`，数据目录不受影响。
+导出离线镜像包（部署机不能访问 GHCR 时）：
+
+```bash
+./scripts/export-image.sh          # 在能联网且有 docker 的机器上执行
+# 产物：dist/tvautoplayer-server-1.11.1.tar
+```
+
+把 tar 拷到部署机后执行 `docker load -i dist/tvautoplayer-server-1.11.1.tar`，再 `docker compose up -d` 即可；compose 里的镜像名与版本需和 tar 一致。
+
+升级：把 `docker-compose.yml` 的镜像 tag 改成新版本号，再执行 `docker compose pull && docker compose up -d`，数据目录不受影响。
 
 数据映射，两个卷各管一件事：
 

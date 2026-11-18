@@ -67,6 +67,8 @@ const removeStoredFile = (name) => {
 };
 const MAX_UPLOAD_GB = Math.max(1, Number(process.env.MAX_UPLOAD_GB) || 8);
 const MAX_UPLOAD = MAX_UPLOAD_GB * 1024 * 1024 * 1024;
+// 单次扫描最多登记的文件数，超出后提示用户再次扫描
+const SCAN_MAX_FILES = 5000;
 // 媒体库现在由后台管理；MEDIA_EXTRA_DIRS 仅作为兼容入口，启动时自动注册为媒体库。
 const EXTRA_MEDIA_DIRS = (process.env.MEDIA_EXTRA_DIRS || '')
   .split(path.delimiter)
@@ -110,8 +112,7 @@ const scrypt = (pwd, saltHex) => {
   return crypto.scryptSync(pwd, salt, 64).toString('hex');
 };
 function ensureDefaultAdmin() {
-  const row = db.prepare('SELECT * FROM admin_user LIMIT 1').get();
-  if (row) return { username: row.username, locked: Date.now()/1000 < row.locked_until };
+  if (db.prepare('SELECT 1 FROM admin_user LIMIT 1').get()) return;
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = scrypt('admin', salt);
   db.prepare('INSERT INTO admin_user (username, password_hash, salt) VALUES (?,?,?)').run('admin', hash, salt);
@@ -140,13 +141,11 @@ function authByCookie(req) {
   const s = sessions.get(sid); if (!s || s.exp < Date.now()/1000) { sessions.delete(sid); return null; }
   return s.username;
 }
-function requireAuth(req, res) {
-  // 1) cookie 会话  2) 环境变量备用 token  3) 无 env 时自动放行（开发便捷）
-  const u = authByCookie(req); if (u) return u;
-  if (ADMIN_TOKEN && req.headers['x-admin-token'] === ADMIN_TOKEN) return 'admin';
-  // ADMIN_TOKEN 未设置且没有用户表 — 开发期自动放行
-  if (!ADMIN_TOKEN && sessions.size === 0) return null; // 走 /api/login
-  return null;
+// 优先 cookie 会话，其次环境变量备用 token
+function requireAuth(req) {
+  const u = authByCookie(req);
+  if (u) return u;
+  return ADMIN_TOKEN && req.headers['x-admin-token'] === ADMIN_TOKEN ? 'admin' : null;
 }
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'heic', 'heif']);
@@ -195,6 +194,9 @@ const SUBTITLE_LANG_SUFFIX = new RegExp(
   ].join('|') + ')$', 'i');
 const SUBTITLE_DIR_NAMES = new Set(['subs', 'sub', 'subtitles', 'subtitle', '字幕']);
 const CHINESE_HINT = /(chs|cht|zh|chi|chn|zho|cn|tw|hk|gb|big5|中|简|繁)/i;
+// 同分规则：同目录优先 > 中文字幕优先 > 路径字典序，保证结果稳定
+const bySubtitleScore = (pathOf) =>
+  (a, b) => a.score - b.score || a.zh - b.zh || pathOf(a).localeCompare(pathOf(b));
 
 /** 字幕基名与视频基名的匹配度：0 完全同名，1 去掉语言后缀后同名，-1 不匹配。 */
 function subtitleNameScore(subBase, baseLower) {
@@ -264,7 +266,7 @@ function findMatchingSubtitle(videoPath, dirCache = null) {
   }
 
   if (candidates.length === 0) return null;
-  candidates.sort((a, b) => a.score - b.score || a.zh - b.zh || a.full.localeCompare(b.full));
+  candidates.sort(bySubtitleScore((c) => c.full));
   return candidates[0].full;
 }
 
@@ -297,7 +299,7 @@ function findRemoteSubtitle(videoPath, subsByDir, dirsByParent) {
   }
 
   if (candidates.length === 0) return null;
-  candidates.sort((a, b) => a.score - b.score || a.zh - b.zh || a.sub.path.localeCompare(b.sub.path));
+  candidates.sort(bySubtitleScore((c) => c.sub.path));
   return candidates[0].sub;
 }
 
@@ -372,8 +374,7 @@ function linkExternal(src, dest) {
   return false;
 }
 
-// Management payloads (program lists, schedule items) are a few hundred KB at most.
-// readBody used the 8 GB upload limit, so one huge JSON body could exhaust memory.
+// 管理接口的 JSON 体积只有几百 KB，和上传分开限制，避免单个大请求耗尽内存
 const MAX_JSON_BODY = 8 * 1024 * 1024;
 
 function readBody(req) {
@@ -404,18 +405,22 @@ const contentVersionOf = (manifest) => {
   const value = parseInt(hex.slice(0, 7), 16);
   return value === 0 ? 1 : value;
 };
+// 字幕文件可能被手动删除，manifest 只下发真实存在的本地字幕
+const subtitleExists = (name) => !!storedFile(name);
+const currentContentVersion = () =>
+  contentVersionOf(buildManifest(db, 0, { hasSubtitleFile: subtitleExists }));
 
 // 删除媒体或直播源时同步清理时段引用；时段因此变空时自动停用，
 // 否则会留下一个「启用但没有任何内容」的时段：终端静默跳过，后台也难察觉。
 function detachFromSchedules(matches) {
   let disabled = 0;
+  const update = db.prepare('UPDATE schedules SET items_json = ?, enabled = ? WHERE id = ?');
   for (const s of db.prepare('SELECT id, items_json, enabled FROM schedules').all()) {
     const items = JSON.parse(s.items_json);
     const kept = items.filter((it) => !matches(it));
     if (kept.length === items.length) continue;
     const enabled = kept.length === 0 ? 0 : s.enabled;
-    db.prepare('UPDATE schedules SET items_json = ?, enabled = ? WHERE id = ?')
-      .run(JSON.stringify(kept), enabled, s.id);
+    update.run(JSON.stringify(kept), enabled, s.id);
     if (kept.length === 0) disabled++;
   }
   return disabled;
@@ -529,6 +534,16 @@ async function probeLiveUrl(url) {
 const probeSummary = (p) =>
   p.kbps ? `延迟 ${p.latencyMs}ms · 测速约 ${p.kbps} KB/s` : `延迟 ${p.latencyMs}ms`;
 
+// 检测未通过时返回给前端的响应体；通过（good）时返回 null。
+const liveProbeFailure = (probe) => {
+  if (probe.ok && probe.verdict !== 'slow') return null;
+  const reason = probe.ok ? '测速偏慢' : probe.reason;
+  return {
+    error: `直播地址检测未通过：${reason}（${probeSummary(probe)}）`,
+    probeFailed: true, reason, probe,
+  };
+};
+
 // 客户端请求体问题返回 400，避免把用户输入错误报成服务端 500
 const clientError = (msg) => Object.assign(new Error(msg), { status: 400 });
 
@@ -606,17 +621,9 @@ const sha256OfRange = (file, start, end) => new Promise((resolve, reject) => {
     .on('error', reject);
 });
 
-const copyRange = (src, start, end, dest) => new Promise((resolve, reject) => {
-  fs.createReadStream(src, { start, end })
-    .pipe(fs.createWriteStream(dest))
-    .on('finish', resolve)
-    .on('error', reject);
-});
-
-// Cuts the multipart data range into the destination file while hashing it in the same pass.
-// Large uploads used to be read twice (hash, then copy); one pass halves the disk reads.
-const extractAndHash = (src, start, end, dest) => new Promise((resolve, reject) => {
-  const h = crypto.createHash('sha256');
+// 把 src 的 [start, end] 片段写入 dest；hash=true 时边写边算 sha256，大文件只读一遍。
+const pipeRange = (src, start, end, dest, hash = false) => new Promise((resolve, reject) => {
+  const h = hash ? crypto.createHash('sha256') : null;
   const rs = fs.createReadStream(src, { start, end, highWaterMark: 1024 * 1024 });
   const ws = fs.createWriteStream(dest);
   let settled = false;
@@ -633,9 +640,9 @@ const extractAndHash = (src, start, end, dest) => new Promise((resolve, reject) 
   ws.on('finish', () => {
     if (settled) return;
     settled = true;
-    resolve(h.digest('hex'));
+    resolve(h ? h.digest('hex') : null);
   });
-  rs.on('data', (chunk) => h.update(chunk));
+  if (h) rs.on('data', (chunk) => h.update(chunk));
   rs.pipe(ws);
 });
 
@@ -697,7 +704,7 @@ async function remuxMkv(up) {
   const src = path.join(MEDIA_DIR, `.remux-src-${crypto.randomUUID()}.mkv`);
   const dst = path.join(MEDIA_DIR, `.remux-dst-${crypto.randomUUID()}.mkv`);
   try {
-    await copyRange(up.tmp, up.start, up.end, src);
+    await pipeRange(up.tmp, up.start, up.end, src);
     // spawnSync 会短暂阻塞事件循环（数百 MB 约数秒），终端轮询超时后自动重试，可接受
     const r = spawnSync('ffmpeg', [
       '-v', 'error', '-y', '-i', src,
@@ -724,10 +731,9 @@ function registerLibrary(name, dirPath) {
   const existing = db.prepare('SELECT id FROM libraries WHERE path = ?').get(resolved);
   if (existing) return existing.id;
   const base = (name || path.basename(resolved) || '媒体库').trim().slice(0, 40);
+  const byName = db.prepare('SELECT 1 FROM libraries WHERE name = ?');
   let candidate = base;
-  for (let i = 2; db.prepare('SELECT 1 FROM libraries WHERE name = ?').get(candidate); i += 1) {
-    candidate = `${base} (${i})`;
-  }
+  for (let i = 2; byName.get(candidate); i += 1) candidate = `${base} (${i})`;
   const info = db.prepare('INSERT INTO libraries (name, path) VALUES (?, ?)').run(candidate, resolved);
   return Number(info.lastInsertRowid);
 }
@@ -761,12 +767,37 @@ function listLibraries() {
   });
 }
 
+/** 媒体库名称校验：非空、不超过 40 字、不与其他库重名。返回错误文案或 null。 */
+function libraryNameError(name, excludeId = 0) {
+  if (!name) return '请填写媒体库名称';
+  if (name.length > 40) return '名称不能超过 40 个字符';
+  return db.prepare('SELECT 1 FROM libraries WHERE name = ? AND id <> ?').get(name, excludeId)
+    ? '媒体库名称重复，请换一个'
+    : null;
+}
+
+/**
+ * 校验本地媒体库目录：必须是存在的绝对路径；writable=true 时还要求可写。
+ * @returns {{dir: string}|{error: string}}
+ */
+function localDirOrError(raw, { writable = false } = {}) {
+  if (!raw) return { error: '请填写文件夹路径' };
+  if (!path.isAbsolute(raw)) return { error: '请填写绝对路径，例如 /mnt/nas/videos 或 D:\\Videos' };
+  const dir = path.resolve(raw);
+  let st = null;
+  try { st = fs.statSync(dir); } catch { /* 不存在，下面统一报错 */ }
+  if (!st || !st.isDirectory()) return { error: `文件夹不存在或不可访问：${dir}` };
+  if (writable) {
+    try { fs.accessSync(dir, fs.constants.W_OK); } catch { return { error: `文件夹不可写入：${dir}` }; }
+  }
+  return { dir };
+}
+
 /**
  * 扫描若干媒体库，把图片/视频登记进 media 表。
  * 主库是服务端自己的目录，文件直接改名入库；外部库用链接引用，原文件不动。
  */
 async function scanLibraries(libs, progress = null) {
-  const MAX_FILES = 5000;
   const files = [];
   let truncated = false;
   let already = 0;
@@ -801,7 +832,7 @@ async function scanLibraries(libs, progress = null) {
         continue;
       }
       files.push({ file: resolved, lib });
-      if (files.length >= MAX_FILES) { truncated = true; return; }
+      if (files.length >= SCAN_MAX_FILES) { truncated = true; return; }
     }
   };
   for (const lib of libs) {
@@ -861,22 +892,21 @@ async function scanLibraries(libs, progress = null) {
       if (fromTemp) {
         // 重封装后的临时文件在媒体目录里，必须先把内容落盘再删源文件
         if (lib.is_main) fs.rmSync(file, { force: true });
-        await copyRange(source, srcStart, srcEnd, target);
+        await pipeRange(source, srcStart, srcEnd, target);
         fs.rmSync(source, { force: true });
       } else if (lib.is_main) {
         // 同目录改名不额外占空间
         if (path.resolve(file) !== path.resolve(target)) fs.renameSync(file, target);
       } else if (!linkExternal(file, target)) {
         // 软链接不可用（如 Windows 未开开发者模式）时退回复制
-        await copyRange(file, 0, statSize - 1, target);
+        await pipeRange(file, 0, statSize - 1, target);
       }
       const inserted = insertMedia.run(
         storeName, name.slice(0, 120), sha256, kind, finalSize,
         lib.id, lib.is_main ? null : file
       );
       if (matchedSubtitle) {
-        // Count it here too: newly added videos are the common case and used to
-        // report "字幕关联 0" even though the subtitle was linked successfully.
+        // 新增视频的字幕关联也要计入统计
         if (await storeSubtitleFile(matchedSubtitle, {
           id: Number(inserted.lastInsertRowid), filename: storeName, orig_name: name,
         })) linked += 1;
@@ -928,7 +958,7 @@ async function scanLibraries(libs, progress = null) {
     `字幕关联 ${linked}，失败 ${failed}`);
   return {
     libraries: libs.map((lib) => ({ id: lib.id, name: lib.name })),
-    limit: MAX_FILES, scanned: files.length, already, added, skipped, failed, truncated,
+    limit: SCAN_MAX_FILES, scanned: files.length, already, added, skipped, failed, truncated,
     errors: errors.slice(0, 10),
   };
 }
@@ -938,7 +968,6 @@ async function scanLibraries(libs, progress = null) {
  * 播放时才按需换取直链，所以整库秒级完成。
  */
 async function scanRemoteLibrary(lib, progress = null) {
-  const MAX_FILES = 5000;
   const creds = {
     baseUrl: lib.base_url,
     username: lib.username,
@@ -982,7 +1011,7 @@ async function scanRemoteLibrary(lib, progress = null) {
       }
       if (!kindOf(entry.name)) continue;
       found.push({ path: full, name: entry.name, size: entry.size });
-      if (found.length >= MAX_FILES) { truncated = true; return; }
+      if (found.length >= SCAN_MAX_FILES) { truncated = true; return; }
     }
   };
   await walk(lib.root_path || '/', 0);
@@ -1033,7 +1062,7 @@ async function scanRemoteLibrary(lib, progress = null) {
     `字幕关联 ${linked}，失败 ${errors.length}`);
   return {
     libraries: [{ id: lib.id, name: lib.name }],
-    limit: MAX_FILES, scanned: found.length, already, added, skipped: 0,
+    limit: SCAN_MAX_FILES, scanned: found.length, already, added, skipped: 0,
     failed: errors.length, truncated, errors: errors.slice(0, 10),
   };
 }
@@ -1154,27 +1183,23 @@ const server = http.createServer(async (req, res) => {
     // 终端公开接口
     if (p === '/api/manifest' && req.method === 'GET') {
       // 直接由当前媒体 / 节目单 / 时段生成，保存后立即对终端可见
-      const manifest = buildManifest(db, 0, { hasSubtitleFile: (name) => !!storedFile(name) });
+      const manifest = buildManifest(db, 0, { hasSubtitleFile: subtitleExists });
       manifest.contentVersion = contentVersionOf(manifest);
       return send(res, 200, manifest);
     }
     if (p === '/api/watch' && req.method === 'GET') {
       // 长轮询：内容一变立即返回；无变化时最多挂起 WATCH_HOLD_MS 后返回当前版本
       const since = Number(url.searchParams.get('version') || '0');
-      const currentVersion = () => contentVersionOf(
-        buildManifest(db, 0, { hasSubtitleFile: (name) => !!storedFile(name) }));
-      const respond = () => {
-        if (res.writableEnded) return;
-        let v = since;
-        try { v = currentVersion(); } catch { /* 保留 since */ }
-        send(res, 200, { contentVersion: v });
-      };
-      if (currentVersion() !== since) return respond();
+      let version = since;
+      try { version = currentContentVersion(); } catch { /* 读库失败时按无变化处理 */ }
+      if (version !== since) return send(res, 200, { contentVersion: version });
       let timer = null;
       const finish = () => {
         contentWatchers.delete(finish);
         if (timer) { clearTimeout(timer); timer = null; }
-        respond();
+        let v = version;
+        try { v = currentContentVersion(); } catch { /* 保留上次版本 */ }
+        if (!res.writableEnded) send(res, 200, { contentVersion: v });
       };
       contentWatchers.add(finish);
       timer = setTimeout(finish, WATCH_HOLD_MS);
@@ -1306,7 +1331,7 @@ const server = http.createServer(async (req, res) => {
       return u ? ok(res, { username: u }) : send(res, 401, { error: '未登录' });
     }
     if (p === '/api/password' && req.method === 'PUT') {
-      const who = requireAuth(req, res);
+      const who = requireAuth(req);
       if (!who) return send(res, 401, { error: '未登录' });
       const { oldPassword, newPassword } = await jsonBody(req);
       if (!newPassword || newPassword.length < 4) return bad(res, '新密码至少 4 位');
@@ -1321,7 +1346,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 以下均为管理接口，须登录
-    const who = requireAuth(req, res);
+    const who = requireAuth(req);
     if (!who) return send(res, 401, { error: '未登录，请先登录' });
 
     // ----- 媒体库管理 -----
@@ -1331,11 +1356,8 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/libraries' && req.method === 'POST') {
       const body = await jsonBody(req);
       const name = String(body.name || '').trim();
-      if (!name) return bad(res, '请填写媒体库名称');
-      if (name.length > 40) return bad(res, '名称不能超过 40 个字符');
-      if (db.prepare('SELECT 1 FROM libraries WHERE name = ?').get(name)) {
-        return bad(res, '媒体库名称重复，请换一个');
-      }
+      const nameError = libraryNameError(name);
+      if (nameError) return bad(res, nameError);
 
       if (String(body.provider || 'LOCAL').toUpperCase() === 'ALIST') {
         const baseUrl = alist.normalizeBase(body.baseUrl);
@@ -1368,15 +1390,9 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      const rawPath = String(body.path || '').trim();
-      if (!rawPath) return bad(res, '请填写文件夹路径');
-      if (!path.isAbsolute(rawPath)) {
-        return bad(res, '请填写绝对路径，例如 /mnt/nas/videos 或 D:\\Videos');
-      }
-      const resolved = path.resolve(rawPath);
-      let st = null;
-      try { st = fs.statSync(resolved); } catch { /* 目录不存在 */ }
-      if (!st || !st.isDirectory()) return bad(res, `文件夹不存在或不可访问：${resolved}`);
+      const checked = localDirOrError(String(body.path || '').trim());
+      if (checked.error) return bad(res, checked.error);
+      const resolved = checked.dir;
       if (db.prepare('SELECT 1 FROM libraries WHERE path = ?').get(resolved)) {
         return bad(res, '这个文件夹已经在媒体库列表里了');
       }
@@ -1458,12 +1474,10 @@ const server = http.createServer(async (req, res) => {
       if (!row) return send(res, 404, { error: '媒体库不存在' });
       const body = await jsonBody(req);
       if (body.name !== undefined) {
-        const name = String(body.name).trim();
-        if (!name) return bad(res, '名称不能为空');
-        if (db.prepare('SELECT 1 FROM libraries WHERE name = ? AND id <> ?').get(name, row.id)) {
-          return bad(res, '媒体库名称重复');
-        }
-        db.prepare('UPDATE libraries SET name = ? WHERE id = ?').run(name.slice(0, 40), row.id);
+        const name = String(body.name).trim().slice(0, 40);
+        const nameError = libraryNameError(name, row.id);
+        if (nameError) return bad(res, nameError);
+        db.prepare('UPDATE libraries SET name = ? WHERE id = ?').run(name, row.id);
       }
       if (body.enabled !== undefined) {
         db.prepare('UPDATE libraries SET enabled = ? WHERE id = ?').run(body.enabled ? 1 : 0, row.id);
@@ -1471,13 +1485,9 @@ const server = http.createServer(async (req, res) => {
       // 本地库可以改挂载目录：远程库没有本地路径，改不了
       if (body.path !== undefined) {
         if (row.provider !== 'LOCAL') return bad(res, 'OpenList 媒体库不能修改本地路径');
-        const raw = String(body.path).trim();
-        if (!raw || !path.isAbsolute(raw)) return bad(res, '请填写文件夹的绝对路径');
-        const dir = path.resolve(raw);
-        let st = null;
-        try { st = fs.statSync(dir); } catch { /* 不存在，下面统一报错 */ }
-        if (!st || !st.isDirectory()) return bad(res, `文件夹不存在：${dir}`);
-        try { fs.accessSync(dir, fs.constants.W_OK); } catch { return bad(res, `文件夹不可写入：${dir}`); }
+        const checked = localDirOrError(String(body.path).trim(), { writable: true });
+        if (checked.error) return bad(res, checked.error);
+        const dir = checked.dir;
         // 把库里已有的文件搬到新目录，避免换目录后旧素材失效；
         // 跨分区 rename 会失败，退回复制后删源。
         const oldDir = row.path && path.resolve(row.path);
@@ -1558,9 +1568,7 @@ const server = http.createServer(async (req, res) => {
       `).all());
     }
     if (p === '/api/media' && req.method === 'POST') {
-      // Browsers send Content-Length for multipart uploads, so oversize files are rejected
-      // before the whole body is streamed. Without this the connection is reset mid-transfer
-      // and the page just stops at some percentage.
+      // 有 Content-Length 时在流式接收前就拒绝超大上传，避免传到一半连接被重置
       const declared = Number(req.headers['content-length'] || 0);
       if (declared > MAX_UPLOAD) {
         res.setHeader('Connection', 'close');
@@ -1598,7 +1606,7 @@ const server = http.createServer(async (req, res) => {
         fs.renameSync(up.tmp, pendingPath);
         sha256 = await sha256OfRange(pendingPath, 0, up.size - 1);
       } else {
-        sha256 = await extractAndHash(up.tmp, up.start, up.end, pendingPath);
+        sha256 = await pipeRange(up.tmp, up.start, up.end, pendingPath, true);
         fs.rmSync(up.tmp, { force: true });
       }
       const exists = db.prepare('SELECT * FROM media WHERE sha256 = ? AND kind = ?').get(sha256, kind);
@@ -1609,7 +1617,6 @@ const server = http.createServer(async (req, res) => {
       const storeName = `${sha256.slice(0, 16)}${ext}`;
       const target = path.join(mainDir(), storeName);
       if (fs.existsSync(target)) fs.rmSync(target, { force: true });
-      // Same-folder rename: the file is never copied a second time.
       fs.renameSync(pendingPath, target);
       const info = db.prepare(
         'INSERT INTO media (filename, orig_name, sha256, kind, size, library_id, sub_path) VALUES (?,?,?,?,?,?,?)'
@@ -1645,11 +1652,12 @@ const server = http.createServer(async (req, res) => {
       const { items } = await jsonBody(req);
       if (!Array.isArray(items)) return bad(res, 'items 须为数组');
       const tx = db.prepare('INSERT INTO program_items (media_id, position, duration_sec) VALUES (?,?,?)');
+      const mediaExists = db.prepare('SELECT 1 FROM media WHERE id = ?');
       db.exec('BEGIN');
       try {
         db.prepare('DELETE FROM program_items').run();
         items.forEach((it, i) => {
-          if (!db.prepare('SELECT 1 FROM media WHERE id = ?').get(it.mediaId)) throw new Error(`媒体 ${it.mediaId} 不存在`);
+          if (!mediaExists.get(it.mediaId)) throw new Error(`媒体 ${it.mediaId} 不存在`);
           tx.run(it.mediaId, i, Number.isInteger(it.durationSec) && it.durationSec > 0 ? it.durationSec : null);
         });
         db.exec('COMMIT');
@@ -1719,13 +1727,8 @@ const server = http.createServer(async (req, res) => {
       let probeResult = null;
       if (!force) {
         const probe = await probeLiveUrl(String(liveUrl).trim());
-        if (!probe.ok || probe.verdict === 'slow') {
-          const why = probe.ok ? '测速偏慢' : probe.reason;
-          return send(res, 400, {
-            error: `直播地址检测未通过：${why}（${probeSummary(probe)}）`,
-            probeFailed: true, reason: why, probe,
-          });
-        }
+        const failure = liveProbeFailure(probe);
+        if (failure) return send(res, 400, failure);
         probeResult = probe;
       }
       const info = db.prepare('INSERT INTO live_streams (name, url) VALUES (?,?)')
@@ -1751,14 +1754,8 @@ const server = http.createServer(async (req, res) => {
       if (!newName) return bad(res, '名称不能为空');
       if (!/^https?:\/\/.+/i.test(newUrl)) return bad(res, '地址须为 http(s) 协议');
       if (!force && newUrl !== row.url) {
-        const probe = await probeLiveUrl(newUrl);
-        if (!probe.ok || probe.verdict === 'slow') {
-          const why = probe.ok ? '测速偏慢' : probe.reason;
-          return send(res, 400, {
-            error: `直播地址检测未通过：${why}（${probeSummary(probe)}）`,
-            probeFailed: true, reason: why, probe,
-          });
-        }
+        const failure = liveProbeFailure(await probeLiveUrl(newUrl));
+        if (failure) return send(res, 400, failure);
       }
       db.prepare('UPDATE live_streams SET name = ?, url = ?, enabled = ? WHERE id = ?')
         .run(newName, newUrl, enabled === undefined ? row.enabled : (enabled ? 1 : 0), row.id);
@@ -1776,7 +1773,7 @@ const server = http.createServer(async (req, res) => {
 
     send(res, 404, { error: '接口不存在' });
   } catch (e) {
-    send(res, e.status || (e.message === '文件过大' || /GB 上限/.test(e.message) ? 413 : 500), { error: e.message });
+    send(res, e.status || 500, { error: e.message });
   }
 });
 

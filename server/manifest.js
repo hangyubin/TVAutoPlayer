@@ -54,18 +54,33 @@ function mediaItem(mediaRow, durationSec, hasSubtitleFile) {
   return item;
 }
 
+// 预编译语句按 db 实例缓存：manifest 是终端轮询的热路径，避免每次请求重复编译 SQL
+const stmtsCache = new WeakMap();
+function stmts(db) {
+  let s = stmtsCache.get(db);
+  if (!s) {
+    s = {
+      media: db.prepare('SELECT * FROM media WHERE id = ?'),
+      live: db.prepare('SELECT * FROM live_streams WHERE id = ? AND enabled = 1'),
+      draft: db.prepare('SELECT media_id, duration_sec FROM program_items ORDER BY position'),
+      schedules: db.prepare('SELECT * FROM schedules'),
+    };
+    stmtsCache.set(db, s);
+  }
+  return s;
+}
+
 // 由媒体 id 列表生成节目单项；条目为 {mediaId, durationSec} 或 {liveId}，跳过已删除/已停用引用
 function resolveItems(db, items, hasSubtitleFile) {
-  const mediaStmt = db.prepare('SELECT * FROM media WHERE id = ?');
-  const liveStmt = db.prepare('SELECT * FROM live_streams WHERE id = ? AND enabled = 1');
+  const st = stmts(db);
   const out = [];
   for (const it of items || []) {
     if (it.liveId != null) {
-      const s = liveStmt.get(it.liveId);
+      const s = st.live.get(it.liveId);
       if (s) out.push({ url: s.url, kind: 'LIVE', name: s.name });
       continue;
     }
-    const row = mediaStmt.get(it.mediaId);
+    const row = st.media.get(it.mediaId);
     if (row) out.push(mediaItem(row, it.durationSec, hasSubtitleFile));
   }
   return out;
@@ -73,13 +88,11 @@ function resolveItems(db, items, hasSubtitleFile) {
 
 function buildManifest(db, contentVersion, options = {}) {
   const hasSubtitleFile = options.hasSubtitleFile;
-  const draft = db.prepare(
-    'SELECT media_id, duration_sec FROM program_items ORDER BY position'
-  ).all();
+  const st = stmts(db);
   const defaultItems = resolveItems(db,
-    draft.map(r => ({ mediaId: r.media_id, durationSec: r.duration_sec })), hasSubtitleFile);
+    st.draft.all().map(r => ({ mediaId: r.media_id, durationSec: r.duration_sec })), hasSubtitleFile);
 
-  const schedules = db.prepare('SELECT * FROM schedules').all().map(s => ({
+  const schedules = st.schedules.all().map(s => ({
     id: s.id,
     startMinute: s.start_minute,
     endMinute: s.end_minute,
